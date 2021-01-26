@@ -1,0 +1,29 @@
+anguage: go
+
+go:
+  - 1.x
+
+addons:
+  apt:
+    packages:
+      - ruby-full
+  update: true
+
+jobs:
+  include:
+    - os: linux
+      dist: focal
+
+install:
+  - source ci/install.sh
+
+script:
+  - ci/build.sh && ci/test.sh
+
+after_success:
+  - ci/after_success.sh
+
+notifications:
+  slack:
+    secure: ZjVkz8gT1JaVfZrpbeQWBLs1as6t94xrumOR4aCX0ycWBAPhqWvMe/4AlBMtdxv607N4ZiVEVwOF1+e7Rv0kkQV4wSoHaxij6c53btCXkMfIxap/90hY5mJwqoskRxgIFXP0bH4tKQqNn5Kd/8ZudfwViltJeKDl4yB/+Alj3LYDuqKlr1il7Y4Odlt6/43GCAfPTUgIV62AGTD6gALVPxeYlFQHKtpvY/L0sKQZFZ3Wv0kRRUpIpSu3DRtFmsdssKlKw8GcT3GkrCp0njv8jwJr/BiEEheSUdNki6YBh0q9p/paVrNMGdkbxIsNqlVMTtrGWUP+L71WZDgpUADT2lh11ZzwhKoTZhnUtlsDfajeX64bfWlVWyaem5fV91ScgHpfZMXvbzn/EMYeyyfE1QqzoD9YDX4DkdwNA8dXaIw80lE1OV3bUUjxUVcbfKVPKR6fb1HM/4AVFAAAoIC/x01VlJCvmVTElhTK4dkl5pp/ss+8Q3Pq8ONaLjiO/BbIGItLbvhtT23L6GCJYS8jh0oelXacZxvOWdHeD1zj/qlaoMTM8NX7HCNIDVTHzYoKRALorzm1FS2Z6IUtfV7o8a2MViPr1wPaRfJCOkLZyh0zf7M5n/GXPWb+cmnbzxrzUUF6uvLb0E63sNQyvSyGWWkJnxTyqQPIJHckXu9gW6s=
+    on_success: never
