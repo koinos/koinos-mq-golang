@@ -65,6 +65,8 @@ const (
 	rpcReplyToPrefix      = "koinos_rpc_reply_"
 )
 
+var koinosMQ *KoinosMQ
+
 // KoinosMQ AMPQ Golang Wrapper
 //
 // - Each RPC message has an rpcType
@@ -125,6 +127,10 @@ type connection struct {
 
 // NewKoinosMQ factory method.
 func NewKoinosMQ(addr string) *KoinosMQ {
+	if koinosMQ != nil {
+		panic("KoinosMQ is a singleton and can only be created once")
+	}
+
 	mq := KoinosMQ{}
 	mq.Address = addr
 
@@ -136,7 +142,13 @@ func NewKoinosMQ(addr string) *KoinosMQ {
 	mq.Handlers.BroadcastNumConsumers = 1
 	mq.Handlers.RPCReturnNumConsumers = 1
 
-	return &mq
+	koinosMQ = &mq
+	return koinosMQ
+}
+
+// GetKoinosMQ returns the created singleton KoinosMQ object
+func GetKoinosMQ() *KoinosMQ {
+	return koinosMQ
 }
 
 // Start begins the connection loop.
