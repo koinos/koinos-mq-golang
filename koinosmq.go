@@ -244,42 +244,28 @@ func randomString(l int) string {
 	return string(bytes)
 }
 
-func (mq *KoinosMQ) sendBroadcast(contentType string, args interface{}) error {
-	cth := mq.Handlers.ContentTypeHandlerMap[contentType]
-	bytes, err := cth.ToBytes(args)
-
-	if err != nil {
-		return err
-	}
-
-	err = mq.conn.AmqpChan.Publish(
+func (mq *KoinosMQ) sendBroadcast(contentType string, args []byte) error {
+	err := mq.conn.AmqpChan.Publish(
 		broadcastExchangeName,
 		"",
 		false,
 		false,
 		amqp.Publishing{
 			ContentType: contentType,
-			Body:        bytes,
+			Body:        args,
 		},
 	)
 
 	return err
 }
 
-func (mq *KoinosMQ) sendRPC(contentType string, args interface{}) (interface{}, error) {
-	cth := mq.Handlers.ContentTypeHandlerMap[contentType]
-	bytes, err := cth.ToBytes(args)
-
-	if err != nil {
-		return nil, err
-	}
-
+func (mq *KoinosMQ) sendRPC(contentType string, args []byte) ([]byte, error) {
 	corrID := randomString(32)
 	returnChan := make(chan rpcReturnType)
 
 	mq.conn.RPCReturnMap[corrID] = returnChan
 
-	err = mq.conn.AmqpChan.Publish(
+	err := mq.conn.AmqpChan.Publish(
 		"",
 		"",
 		false,
@@ -288,18 +274,18 @@ func (mq *KoinosMQ) sendRPC(contentType string, args interface{}) (interface{}, 
 			ContentType:   contentType,
 			CorrelationId: corrID,
 			ReplyTo:       mq.conn.RPCReplyTo,
-			Body:          bytes,
+			Body:          args,
 		},
 	)
 
-	var result interface{} = nil
+	var result []byte = nil
 
 	if err == nil {
 		// Wait on channel to get result bytes
 		rpcResult := <-returnChan
 
 		if rpcResult.err != nil {
-			result, err = cth.FromBytes(rpcResult.data)
+			result = rpcResult.data
 		} else {
 			err = rpcResult.err
 		}
