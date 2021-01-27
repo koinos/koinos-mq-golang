@@ -440,7 +440,7 @@ func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan amqp.Delivery, error) {
 
 	broadcastQueue, err := c.AmqpChan.QueueDeclare(
-		"",
+		topic,
 		false, // Durable
 		false, // Delete when unused
 		true,  // Exclusive
@@ -449,6 +449,18 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 	)
 	if err != nil {
 		log.Printf("AMQP error calling QueueDeclare: %v\n", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		broadcastQueue.Name,
+		topic,
+		broadcastExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
 		return nil, err
 	}
 
