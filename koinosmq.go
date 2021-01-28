@@ -46,12 +46,13 @@ type HandlerTable struct {
 }
 
 const (
-	broadcastExchangeName = "koinos_event"
-	broadcastKeyName      = ""
-	rpcExchangeName       = ""
-	rpcKeyName            = ""
-	rpcQueuePrefix        = "koinos_rpc_"
-	rpcReplyToPrefix      = "koinos_rpc_reply_"
+	broadcastExchangeName  = "koinos_event"
+	broadcastKeyName       = ""
+	rpcExchangeName        = "koinos_rpc"
+	rpcKeyName             = ""
+	rpcQueuePrefix         = "koinos_rpc_"
+	rpcReplyToExchangeName = "koinos_rpc_reply"
+	rpcReplyToPrefix       = "koinos_rpc_reply_"
 )
 
 var koinosMQ *KoinosMQ
@@ -384,7 +385,7 @@ func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 
 	rpcQueueName := "koinos_rpc_" + rpcType
 
-	_, err := c.AmqpChan.QueueDeclare(
+	rpcQueue, err := c.AmqpChan.QueueDeclare(
 		rpcQueueName,
 		true,  // Durable
 		false, // Delete when unused
@@ -394,6 +395,18 @@ func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 	)
 	if err != nil {
 		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		rpcQueue.Name,
+		rpcQueue.Name,
+		rpcExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
 		return nil, err
 	}
 
@@ -480,6 +493,18 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 	)
 	if err != nil {
 		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		queue.Name,
+		queue.Name,
+		rpcReplyToExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
 		return nil, err
 	}
 
