@@ -210,7 +210,6 @@ func (mq *KoinosMQ) ConnectLoop() {
 // newConnection creates a new Connection
 func (mq *KoinosMQ) newConnection() *connection {
 	conn := connection{}
-	conn.RPCReplyTo = rpcReplyToPrefix + randomString(8)
 	conn.Handlers = &mq.Handlers
 	conn.RPCReturnMap = make(map[string]chan rpcReturnType)
 	return &conn
@@ -471,11 +470,11 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 // ConsumeRPC creates a delivery channel for the given RPC type.
 func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery, error) {
 
-	_, err := c.AmqpChan.QueueDeclare(
-		c.RPCReplyTo,
+	queue, err := c.AmqpChan.QueueDeclare(
+		"",
 		true,  // Durable
-		false, // Delete when unused
-		false, // Exclusive
+		true,  // Delete when unused
+		true,  // Exclusive
 		false, // No-wait
 		nil,   // Arguments
 	)
@@ -484,6 +483,7 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 		return nil, err
 	}
 
+	c.RPCReplyTo = queue.Name
 	result := make([]<-chan amqp.Delivery, numConsumers)
 
 	for i := 0; i < numConsumers; i++ {
@@ -520,6 +520,8 @@ func (c *connection) ConsumeRPCLoop(consumer <-chan amqp.Delivery, handlers *Han
 		if err != nil {
 			log.Printf("Couldn't deliver message, error is %v\n", err)
 			// TODO: Should an error close the connection?
+		} else {
+			delivery.Ack(true)
 		}
 	}
 	log.Printf("Exit ConsumeRPCLoop\n")
@@ -538,6 +540,7 @@ func (c *connection) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, handler
 func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 	log.Printf("Enter ConsumeRPCReturnLoop\n")
 	for delivery := range consumer {
+		delivery.Ack(true)
 		var result rpcReturnType
 		result.data = delivery.Body
 		c.RPCReturnMap[delivery.CorrelationId] <- result
