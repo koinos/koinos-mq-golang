@@ -9,27 +9,16 @@ import (
 	"github.com/streadway/amqp"
 )
 
-// ContentTypeHandler Handler for a content-type.
-type ContentTypeHandler interface {
-	FromBytes([]byte) (interface{}, error)
-	ToBytes(interface{}) ([]byte, error)
-}
-
 // RPCHandlerFunc Function type to handle an RPC message
-type RPCHandlerFunc = func(rpcType string, rpc interface{}) (interface{}, error)
+type RPCHandlerFunc = func(rpcType string, data []byte) ([]byte, error)
 
 // BroadcastHandlerFunc Function type to handle a broadcast message
-type BroadcastHandlerFunc = func(topic string, msg interface{})
+type BroadcastHandlerFunc = func(topic string, data []byte)
 
 // HandlerTable Transform amqp.Delivery to RpcHandler / BroadcastHandler call.
 //
 // This struct contains fields for purely computational dispatch and serialization logic.
 type HandlerTable struct {
-	/**
-	 * Handlers for different content.
-	 */
-	ContentTypeHandlerMap map[string]ContentTypeHandler
-
 	/**
 	 * Handlers for RPC.  Indexed by rpcType.
 	 */
@@ -134,7 +123,6 @@ func NewKoinosMQ(addr string) *KoinosMQ {
 	mq := KoinosMQ{}
 	mq.Address = addr
 
-	mq.Handlers.ContentTypeHandlerMap = make(map[string]ContentTypeHandler)
 	mq.Handlers.RPCHandlerMap = make(map[string]RPCHandlerFunc)
 	mq.Handlers.BroadcastHandlerMap = make(map[string]BroadcastHandlerFunc)
 
@@ -154,11 +142,6 @@ func GetKoinosMQ() *KoinosMQ {
 // Start begins the connection loop.
 func (mq *KoinosMQ) Start() {
 	go mq.ConnectLoop()
-}
-
-// SetContentTypeHandler sets the content type handler for a content type.
-func (mq *KoinosMQ) SetContentTypeHandler(contentType string, handler ContentTypeHandler) {
-	mq.Handlers.ContentTypeHandlerMap[contentType] = handler
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.
@@ -568,25 +551,10 @@ func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 func (handlers *HandlerTable) HandleRPCDelivery(rpcType string, delivery *amqp.Delivery) *amqp.Publishing {
 	// TODO:  Proper RPC error handling
 
-	cth := handlers.ContentTypeHandlerMap[delivery.ContentType]
-	if cth != nil {
-		log.Printf("Unknown ContentType\n")
-		return nil
-	}
-	input, err := cth.FromBytes(delivery.Body)
-	if err != nil {
-		log.Printf("Couldn't deserialize rpc input\n")
-		return nil
-	}
 	handler := handlers.RPCHandlerMap[rpcType]
-	output, err := handler(rpcType, input)
+	output, err := handler(rpcType, delivery.Body)
 	if err != nil {
 		log.Printf("Error in RPC handler\n")
-		return nil
-	}
-	outputBytes, err := cth.ToBytes(output)
-	if err != nil {
-		log.Printf("Couldn't serialize rpc output\n")
 		return nil
 	}
 	outputPub := amqp.Publishing{
@@ -594,23 +562,13 @@ func (handlers *HandlerTable) HandleRPCDelivery(rpcType string, delivery *amqp.D
 		Timestamp:     time.Now(),
 		ContentType:   delivery.ContentType,
 		CorrelationId: delivery.CorrelationId,
-		Body:          outputBytes,
+		Body:          output,
 	}
 	return &outputPub
 }
 
 // HandleBroadcastDelivery handles a single broadcast delivery.
 func (handlers *HandlerTable) HandleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
-	cth := handlers.ContentTypeHandlerMap[delivery.ContentType]
-	if cth != nil {
-		log.Printf("Unknown ContentType\n")
-		return
-	}
-	input, err := cth.FromBytes(delivery.Body)
-	if err != nil {
-		log.Printf("Couldn't deserialize broadcast\n")
-		return
-	}
 	handler := handlers.BroadcastHandlerMap[topic]
-	handler(delivery.RoutingKey, input)
+	handler(delivery.RoutingKey, delivery.Body)
 }
