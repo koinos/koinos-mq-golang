@@ -347,6 +347,34 @@ func (c *connection) Open(addr string, handlers *HandlerTable) error {
 		return err
 	}
 
+	err = c.AmqpChan.ExchangeDeclare(
+		rpcExchangeName, // Name
+		"direct",        // type
+		true,            // durable
+		false,           // auto-deleted
+		false,           // internal
+		false,           // no-wait
+		nil,             // arguments
+	)
+	if err != nil {
+		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		return err
+	}
+
+	err = c.AmqpChan.ExchangeDeclare(
+		rpcReplyToExchangeName, // Name
+		"direct",               // type
+		true,                   // durable
+		false,                  // auto-deleted
+		false,                  // internal
+		false,                  // no-wait
+		nil,                    // arguments
+	)
+	if err != nil {
+		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		return err
+	}
+
 	for rpcType := range handlers.RPCHandlerMap {
 		consumers, err := c.ConsumeRPC(rpcType, handlers.RPCNumConsumers)
 		if err != nil {
