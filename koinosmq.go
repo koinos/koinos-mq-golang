@@ -474,7 +474,7 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 		"",
 		true,  // Durable
 		true,  // Delete when unused
-		true,  // Exclusive
+		false, // Exclusive
 		false, // No-wait
 		nil,   // Arguments
 	)
@@ -483,23 +483,24 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 		return nil, err
 	}
 
-	c.RPCReplyTo = queue.Name
 	result := make([]<-chan amqp.Delivery, numConsumers)
 
 	for i := 0; i < numConsumers; i++ {
 		result[i], err = c.AmqpChan.Consume(
-			c.RPCReplyTo, // Queue
-			"",           // Consumer
-			false,        // AutoAck
-			false,        // Exclusive
-			false,        // NoLocal
-			false,        // NoWait
-			nil,          // Arguments
+			queue.Name, // Queue
+			"",         // Consumer
+			false,      // AutoAck
+			false,      // Exclusive
+			false,      // NoLocal
+			false,      // NoWait
+			nil,        // Arguments
 		)
 		if err != nil {
 			return nil, err
 		}
 	}
+
+	c.RPCReplyTo = queue.Name
 
 	return result, nil
 }
