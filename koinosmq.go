@@ -270,9 +270,9 @@ func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]
 		rpcResult := <-returnChan
 
 		if rpcResult.err != nil {
-			result = rpcResult.data
-		} else {
 			err = rpcResult.err
+		} else {
+			result = rpcResult.data
 		}
 	}
 
