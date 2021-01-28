@@ -228,10 +228,10 @@ func randomString(l int) string {
 }
 
 // SendBroadcast sends a broadcast message
-func (mq *KoinosMQ) SendBroadcast(contentType string, args []byte) error {
+func (mq *KoinosMQ) SendBroadcast(contentType string, topic string, args []byte) error {
 	err := mq.conn.AmqpChan.Publish(
 		broadcastExchangeName,
-		"",
+		topic,
 		false,
 		false,
 		amqp.Publishing{
@@ -244,14 +244,14 @@ func (mq *KoinosMQ) SendBroadcast(contentType string, args []byte) error {
 }
 
 // SendRPC sends an rpc message
-func (mq *KoinosMQ) SendRPC(contentType string, args []byte) ([]byte, error) {
+func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
 	corrID := randomString(32)
 	returnChan := make(chan rpcReturnType)
 
 	mq.conn.RPCReturnMap[corrID] = returnChan
 
 	err := mq.conn.AmqpChan.Publish(
-		"",
+		rpcQueuePrefix+rpcType,
 		"",
 		false,
 		false,
