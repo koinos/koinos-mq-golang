@@ -212,6 +212,7 @@ func (mq *KoinosMQ) newConnection() *connection {
 	conn := connection{}
 	conn.RPCReplyTo = rpcReplyToPrefix + randomString(8)
 	conn.Handlers = &mq.Handlers
+	conn.RPCReturnMap = make(map[string]chan rpcReturnType)
 	return &conn
 }
 
