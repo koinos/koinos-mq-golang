@@ -466,8 +466,8 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 	broadcastQueue, err := c.AmqpChan.QueueDeclare(
 		"",
 		false, // Durable
-		false, // Delete when unused
-		true,  // Exclusive
+		true,  // Delete when unused
+		false, // Exclusive
 		false, // No-wait
 		nil,   // Arguments
 	)
