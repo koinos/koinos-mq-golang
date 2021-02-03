@@ -464,7 +464,7 @@ func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan amqp.Delivery, error) {
 
 	broadcastQueue, err := c.AmqpChan.QueueDeclare(
-		topic,
+		"",
 		false, // Durable
 		false, // Delete when unused
 		true,  // Exclusive
