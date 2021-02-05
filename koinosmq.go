@@ -364,7 +364,7 @@ func (c *connection) Open(addr string, handlers *HandlerTable) error {
 	err = c.AmqpChan.ExchangeDeclare(
 		rpcReplyToExchangeName, // Name
 		"direct",               // type
-		false,                  // durable
+		true,                   // durable
 		false,                  // auto-deleted
 		false,                  // internal
 		false,                  // no-wait
