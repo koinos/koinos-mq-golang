@@ -252,7 +252,7 @@ func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]
 	mq.conn.RPCReturnMap[corrID] = returnChan
 
 	err := mq.conn.AmqpChan.Publish(
-		"",
+		rpcExchangeName,
 		rpcQueuePrefix+rpcType,
 		false,
 		false,
@@ -465,9 +465,9 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 
 	broadcastQueue, err := c.AmqpChan.QueueDeclare(
 		"",
-		true, // Durable
+		false, // Durable
 		true,  // Delete when unused
-		false, // Exclusive
+		true,  // Exclusive
 		false, // No-wait
 		nil,   // Arguments
 	)
@@ -495,7 +495,7 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 			broadcastQueue.Name, // Queue
 			"",                  // Consumer
 			false,               // AutoAck
-			false,               // Exclusive
+			true,                // Exclusive
 			false,               // NoLocal
 			false,               // NoWait
 			nil,                 // Arguments
@@ -513,7 +513,7 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 
 	queue, err := c.AmqpChan.QueueDeclare(
 		"",
-		true,  // Durable
+		false, // Durable
 		true,  // Delete when unused
 		false, // Exclusive
 		false, // No-wait
