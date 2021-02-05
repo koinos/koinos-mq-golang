@@ -252,7 +252,7 @@ func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]
 	mq.conn.RPCReturnMap[corrID] = returnChan
 
 	err := mq.conn.AmqpChan.Publish(
-		"",
+		rpcExchangeName,
 		rpcQueuePrefix+rpcType,
 		false,
 		false,
