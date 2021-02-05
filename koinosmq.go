@@ -3,32 +3,22 @@ package koinosmq
 import (
 	"errors"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/streadway/amqp"
 )
 
-// ContentTypeHandler Handler for a content-type.
-type ContentTypeHandler interface {
-	FromBytes([]byte) (interface{}, error)
-	ToBytes(interface{}) ([]byte, error)
-}
-
 // RPCHandlerFunc Function type to handle an RPC message
-type RPCHandlerFunc = func(rpcType string, rpc interface{}) (interface{}, error)
+type RPCHandlerFunc = func(rpcType string, data []byte) ([]byte, error)
 
 // BroadcastHandlerFunc Function type to handle a broadcast message
-type BroadcastHandlerFunc = func(topic string, msg interface{})
+type BroadcastHandlerFunc = func(topic string, data []byte)
 
 // HandlerTable Transform amqp.Delivery to RpcHandler / BroadcastHandler call.
 //
 // This struct contains fields for purely computational dispatch and serialization logic.
 type HandlerTable struct {
-	/**
-	 * Handlers for different content.
-	 */
-	ContentTypeHandlerMap map[string]ContentTypeHandler
-
 	/**
 	 * Handlers for RPC.  Indexed by rpcType.
 	 */
@@ -48,7 +38,24 @@ type HandlerTable struct {
 	 * Number of broadcast consumers
 	 */
 	BroadcastNumConsumers int
+
+	/**
+	 * Number of RPC Return consumers
+	 */
+	RPCReturnNumConsumers int
 }
+
+const (
+	broadcastExchangeName  = "koinos_event"
+	broadcastKeyName       = ""
+	rpcExchangeName        = "koinos_rpc"
+	rpcKeyName             = ""
+	rpcQueuePrefix         = "koinos_rpc_"
+	rpcReplyToExchangeName = "koinos_rpc_reply"
+	rpcReplyToPrefix       = "koinos_rpc_reply_"
+)
+
+var koinosMQ *KoinosMQ
 
 // KoinosMQ AMPQ Golang Wrapper
 //
@@ -66,10 +73,17 @@ type KoinosMQ struct {
 	 * Handlers for RPC and broadcast.
 	 */
 	Handlers HandlerTable
+
+	conn *connection
 }
 
-// Connection Encapsulates all the connection-specific queue.
-type Connection struct {
+type rpcReturnType struct {
+	data []byte
+	err  error
+}
+
+// connection Encapsulates all the connection-specific queue.
+type connection struct {
 	AmqpConn *amqp.Connection
 	AmqpChan *amqp.Channel
 
@@ -85,36 +99,50 @@ type Connection struct {
 	BroadcastRecvQueue *amqp.Queue
 
 	/**
+	 * RPCReturnQueue is an exclusive private queue for the returns of RPC calls.
+	 */
+	RPCReturnQueue *amqp.Queue
+
+	/**
 	 * Handlers for RPC and broadcast.
 	 */
 	Handlers *HandlerTable
+
+	RPCReturnMap map[string]chan rpcReturnType
+
+	RPCReplyTo string
 
 	NotifyClose chan *amqp.Error
 }
 
 // NewKoinosMQ factory method.
 func NewKoinosMQ(addr string) *KoinosMQ {
+	if koinosMQ != nil {
+		panic("KoinosMQ is a singleton and can only be created once")
+	}
+
 	mq := KoinosMQ{}
 	mq.Address = addr
 
-	mq.Handlers.ContentTypeHandlerMap = make(map[string]ContentTypeHandler)
 	mq.Handlers.RPCHandlerMap = make(map[string]RPCHandlerFunc)
 	mq.Handlers.BroadcastHandlerMap = make(map[string]BroadcastHandlerFunc)
 
 	mq.Handlers.RPCNumConsumers = 1
 	mq.Handlers.BroadcastNumConsumers = 1
+	mq.Handlers.RPCReturnNumConsumers = 1
 
-	return &mq
+	koinosMQ = &mq
+	return koinosMQ
+}
+
+// GetKoinosMQ returns the created singleton KoinosMQ object
+func GetKoinosMQ() *KoinosMQ {
+	return koinosMQ
 }
 
 // Start begins the connection loop.
 func (mq *KoinosMQ) Start() {
 	go mq.ConnectLoop()
-}
-
-// SetContentTypeHandler sets the content type handler for a content type.
-func (mq *KoinosMQ) SetContentTypeHandler(contentType string, handler ContentTypeHandler) {
-	mq.Handlers.ContentTypeHandlerMap[contentType] = handler
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.
@@ -131,13 +159,14 @@ func (mq *KoinosMQ) SetBroadcastHandler(topic string, handler BroadcastHandlerFu
 //
 // This sets the number of parallel goroutines that consume the respective AMQP queues.
 // Must be called before Connect().
-func (mq *KoinosMQ) SetNumConsumers(rpcNumConsumers int, broadcastNumConsumers int) {
+func (mq *KoinosMQ) SetNumConsumers(rpcNumConsumers int, broadcastNumConsumers int, rpcReturnNumConsumers int) {
 	mq.Handlers.RPCNumConsumers = rpcNumConsumers
 	mq.Handlers.BroadcastNumConsumers = broadcastNumConsumers
+	mq.Handlers.RPCReturnNumConsumers = rpcReturnNumConsumers
 }
 
 // ConnectLoop is the main entry point.
-func (mq *KoinosMQ) ConnectLoop() *Connection {
+func (mq *KoinosMQ) ConnectLoop() {
 	const (
 		RetryMinDelay      = 1
 		RetryMaxDelay      = 25
@@ -148,10 +177,9 @@ func (mq *KoinosMQ) ConnectLoop() *Connection {
 		retryCount := 0
 		log.Printf("Connecting to AMQP server %v\n", mq.Address)
 
-		var conn *Connection
 		for {
-			conn = mq.NewConnection()
-			err := conn.Open(mq.Address, &mq.Handlers)
+			mq.conn = mq.newConnection()
+			err := mq.conn.Open(mq.Address, &mq.Handlers)
 			if err == nil {
 				break
 			}
@@ -175,28 +203,95 @@ func (mq *KoinosMQ) ConnectLoop() *Connection {
 		   case <-mq.quitChan:
 		      return
 		*/
-		case <-conn.NotifyClose:
+		case <-mq.conn.NotifyClose:
 		}
 	}
 }
 
-// NewConnection creates a new Connection
-func (mq *KoinosMQ) NewConnection() *Connection {
-	conn := Connection{}
+// newConnection creates a new Connection
+func (mq *KoinosMQ) newConnection() *connection {
+	conn := connection{}
 	conn.Handlers = &mq.Handlers
+	conn.RPCReturnMap = make(map[string]chan rpcReturnType)
 	return &conn
+}
+
+func randInt(min int, max int) int {
+	return min + rand.Intn(max-min)
+}
+
+func randomString(l int) string {
+	bytes := make([]byte, l)
+	for i := 0; i < l; i++ {
+		bytes[i] = byte(randInt(65, 90))
+	}
+	return string(bytes)
+}
+
+// SendBroadcast sends a broadcast message
+func (mq *KoinosMQ) SendBroadcast(contentType string, topic string, args []byte) error {
+	err := mq.conn.AmqpChan.Publish(
+		broadcastExchangeName,
+		topic,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: contentType,
+			Body:        args,
+		},
+	)
+
+	return err
+}
+
+// SendRPC sends an rpc message
+func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
+	corrID := randomString(32)
+	returnChan := make(chan rpcReturnType)
+
+	mq.conn.RPCReturnMap[corrID] = returnChan
+
+	err := mq.conn.AmqpChan.Publish(
+		"",
+		rpcQueuePrefix+rpcType,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:   contentType,
+			CorrelationId: corrID,
+			ReplyTo:       mq.conn.RPCReplyTo,
+			Body:          args,
+		},
+	)
+
+	var result []byte = nil
+
+	if err == nil {
+		// Wait on channel to get result bytes
+		rpcResult := <-returnChan
+
+		if rpcResult.err != nil {
+			err = rpcResult.err
+		} else {
+			result = rpcResult.data
+		}
+	}
+
+	delete(mq.conn.RPCReturnMap, corrID)
+
+	return result, err
 }
 
 /**
  * Set all fields to nil or default values.
  */
-func (c *Connection) reset() {
+func (c *connection) reset() {
 	c.AmqpConn = nil
 	c.AmqpChan = nil
 }
 
 // Close the connection.
-func (c *Connection) Close() error {
+func (c *connection) Close() error {
 	amqpConn := c.AmqpConn
 	c.reset()
 
@@ -209,9 +304,9 @@ func (c *Connection) Close() error {
 // Open and attempt to connection.
 //
 // Return error if connection attempt fails (i.e., no retry).
-func (c *Connection) Open(addr string, handlers *HandlerTable) error {
+func (c *connection) Open(addr string, handlers *HandlerTable) error {
 	if (c.AmqpConn != nil) || (c.AmqpChan != nil) {
-		return errors.New("Attempted to reuse Connection")
+		return errors.New("Attempted to reuse connection")
 	}
 	var err error = nil
 
@@ -239,13 +334,41 @@ func (c *Connection) Open(addr string, handlers *HandlerTable) error {
 	c.AmqpChan.NotifyClose(c.NotifyClose)
 
 	err = c.AmqpChan.ExchangeDeclare(
-		"koinos_event", // Name
-		"topic",        // type
-		true,           // durable
-		false,          // auto-deleted
-		false,          // internal
-		false,          // no-wait
-		nil,            // arguments
+		broadcastExchangeName, // Name
+		"topic",               // type
+		true,                  // durable
+		false,                 // auto-deleted
+		false,                 // internal
+		false,                 // no-wait
+		nil,                   // arguments
+	)
+	if err != nil {
+		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		return err
+	}
+
+	err = c.AmqpChan.ExchangeDeclare(
+		rpcExchangeName, // Name
+		"direct",        // type
+		true,            // durable
+		false,           // auto-deleted
+		false,           // internal
+		false,           // no-wait
+		nil,             // arguments
+	)
+	if err != nil {
+		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		return err
+	}
+
+	err = c.AmqpChan.ExchangeDeclare(
+		rpcReplyToExchangeName, // Name
+		"direct",               // type
+		true,                   // durable
+		false,                  // auto-deleted
+		false,                  // internal
+		false,                  // no-wait
+		nil,                    // arguments
 	)
 	if err != nil {
 		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
@@ -271,15 +394,26 @@ func (c *Connection) Open(addr string, handlers *HandlerTable) error {
 			go c.ConsumeBroadcastLoop(consumer, handlers, topic)
 		}
 	}
+
+	consumers, err := c.ConsumeRPCReturn(handlers.RPCReturnNumConsumers)
+	if err != nil {
+		return err
+	}
+	for _, consumer := range consumers {
+		go c.ConsumeRPCReturnLoop(consumer)
+	}
+
+	// TODO: Handle RPC Return expiration in separate thread
+
 	return nil
 }
 
 // ConsumeRPC creates a delivery channel for the given RPC type.
-func (c *Connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp.Delivery, error) {
+func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp.Delivery, error) {
 
 	rpcQueueName := "koinos_rpc_" + rpcType
 
-	_, err := c.AmqpChan.QueueDeclare(
+	rpcQueue, err := c.AmqpChan.QueueDeclare(
 		rpcQueueName,
 		true,  // Durable
 		false, // Delete when unused
@@ -289,6 +423,18 @@ func (c *Connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 	)
 	if err != nil {
 		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		rpcQueue.Name,
+		rpcQueue.Name,
+		rpcExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
 		return nil, err
 	}
 
@@ -315,18 +461,30 @@ func (c *Connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp
 // ConsumeBroadcast creates a delivery channel for the given broadcast topic.
 //
 // Returned channels are compteting consumers on a single AMQP queue.
-func (c *Connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan amqp.Delivery, error) {
+func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan amqp.Delivery, error) {
 
 	broadcastQueue, err := c.AmqpChan.QueueDeclare(
 		"",
-		false, // Durable
-		false, // Delete when unused
-		true,  // Exclusive
+		true, // Durable
+		true,  // Delete when unused
+		false, // Exclusive
 		false, // No-wait
 		nil,   // Arguments
 	)
 	if err != nil {
 		log.Printf("AMQP error calling QueueDeclare: %v\n", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		broadcastQueue.Name,
+		topic,
+		broadcastExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
 		return nil, err
 	}
 
@@ -350,8 +508,58 @@ func (c *Connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 	return result, nil
 }
 
+// ConsumeRPC creates a delivery channel for the given RPC type.
+func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery, error) {
+
+	queue, err := c.AmqpChan.QueueDeclare(
+		"",
+		true,  // Durable
+		true,  // Delete when unused
+		false, // Exclusive
+		false, // No-wait
+		nil,   // Arguments
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		return nil, err
+	}
+
+	err = c.AmqpChan.QueueBind(
+		queue.Name,
+		queue.Name,
+		rpcReplyToExchangeName,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Printf("AMQP error calling QueueBind: %v\n", err)
+		return nil, err
+	}
+
+	result := make([]<-chan amqp.Delivery, numConsumers)
+
+	for i := 0; i < numConsumers; i++ {
+		result[i], err = c.AmqpChan.Consume(
+			queue.Name, // Queue
+			"",         // Consumer
+			false,      // AutoAck
+			false,      // Exclusive
+			false,      // NoLocal
+			false,      // NoWait
+			nil,        // Arguments
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	c.RPCReplyTo = queue.Name
+
+	return result, nil
+}
+
 // ConsumeRPCLoop consumption loop for RPC. Normally, the caller would run this function in a goroutine.
-func (c *Connection) ConsumeRPCLoop(consumer <-chan amqp.Delivery, handlers *HandlerTable, rpcType string, RespChan *amqp.Channel) {
+func (c *connection) ConsumeRPCLoop(consumer <-chan amqp.Delivery, handlers *HandlerTable, rpcType string, RespChan *amqp.Channel) {
 	log.Printf("Enter ConsumeRPCLoop\n")
 	for delivery := range consumer {
 		outputPub := handlers.HandleRPCDelivery(rpcType, &delivery)
@@ -366,18 +574,32 @@ func (c *Connection) ConsumeRPCLoop(consumer <-chan amqp.Delivery, handlers *Han
 		if err != nil {
 			log.Printf("Couldn't deliver message, error is %v\n", err)
 			// TODO: Should an error close the connection?
+		} else {
+			delivery.Ack(true)
 		}
 	}
 	log.Printf("Exit ConsumeRPCLoop\n")
 }
 
 // ConsumeBroadcastLoop consumption loop for broadcast. Normally, the caller would run this function in a goroutine.
-func (c *Connection) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, handlers *HandlerTable, topic string) {
+func (c *connection) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, handlers *HandlerTable, topic string) {
 	log.Printf("Enter ConsumeBroadcastLoop\n")
 	for delivery := range consumer {
 		handlers.HandleBroadcastDelivery(topic, &delivery)
 	}
 	log.Printf("Exit ConsumeBroadcastLoop\n")
+}
+
+// ConsumeRPCLoop consumption loop for RPC. Normally, the caller would run this function in a goroutine.
+func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
+	log.Printf("Enter ConsumeRPCReturnLoop\n")
+	for delivery := range consumer {
+		delivery.Ack(true)
+		var result rpcReturnType
+		result.data = delivery.Body
+		c.RPCReturnMap[delivery.CorrelationId] <- result
+	}
+	log.Printf("Exit ConsumeRPCReturnLoop\n")
 }
 
 // HandleRPCDelivery handles a single RPC delivery.
@@ -387,25 +609,10 @@ func (c *Connection) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, handler
 func (handlers *HandlerTable) HandleRPCDelivery(rpcType string, delivery *amqp.Delivery) *amqp.Publishing {
 	// TODO:  Proper RPC error handling
 
-	cth := handlers.ContentTypeHandlerMap[delivery.ContentType]
-	if cth != nil {
-		log.Printf("Unknown ContentType\n")
-		return nil
-	}
-	input, err := cth.FromBytes(delivery.Body)
-	if err != nil {
-		log.Printf("Couldn't deserialize rpc input\n")
-		return nil
-	}
 	handler := handlers.RPCHandlerMap[rpcType]
-	output, err := handler(rpcType, input)
+	output, err := handler(rpcType, delivery.Body)
 	if err != nil {
 		log.Printf("Error in RPC handler\n")
-		return nil
-	}
-	outputBytes, err := cth.ToBytes(output)
-	if err != nil {
-		log.Printf("Couldn't serialize rpc output\n")
 		return nil
 	}
 	outputPub := amqp.Publishing{
@@ -413,23 +620,13 @@ func (handlers *HandlerTable) HandleRPCDelivery(rpcType string, delivery *amqp.D
 		Timestamp:     time.Now(),
 		ContentType:   delivery.ContentType,
 		CorrelationId: delivery.CorrelationId,
-		Body:          outputBytes,
+		Body:          output,
 	}
 	return &outputPub
 }
 
 // HandleBroadcastDelivery handles a single broadcast delivery.
 func (handlers *HandlerTable) HandleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
-	cth := handlers.ContentTypeHandlerMap[delivery.ContentType]
-	if cth != nil {
-		log.Printf("Unknown ContentType\n")
-		return
-	}
-	input, err := cth.FromBytes(delivery.Body)
-	if err != nil {
-		log.Printf("Couldn't deserialize broadcast\n")
-		return
-	}
 	handler := handlers.BroadcastHandlerMap[topic]
-	handler(delivery.RoutingKey, input)
+	handler(delivery.RoutingKey, delivery.Body)
 }
