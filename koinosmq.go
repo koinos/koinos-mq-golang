@@ -309,17 +309,17 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 	done <- &callResult
 }
 
-// SendRPCWithContext makes a block RPC call with timeout of the given context
-func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
+// RPCContext makes a block RPC call with timeout of the given context
+func (mq *KoinosMQ) RPCContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
 	done := make(chan *RPCCallResult)
 	go mq.makeRPCCall(ctx, contentType, rpcType, args, done)
 	result := <-done
 	return result.Result, result.Error
 }
 
-// SendRPC makes a blocking RPC call with no timeout
-func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
-	return mq.SendRPCWithContext(context.Background(), contentType, rpcType, args)
+// RPC makes a blocking RPC call with no timeout
+func (mq *KoinosMQ) RPC(contentType string, rpcType string, args []byte) ([]byte, error) {
+	return mq.RPCContext(context.Background(), contentType, rpcType, args)
 }
 
 // GoRPCContext asynchronously makes an RPC call with timeout of the given context
