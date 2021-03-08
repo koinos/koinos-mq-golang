@@ -1,9 +1,11 @@
 package koinosmq
 
 import (
+	"context"
 	"errors"
 	"log"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/streadway/amqp"
@@ -108,7 +110,8 @@ type connection struct {
 	 */
 	Handlers *HandlerTable
 
-	RPCReturnMap map[string]chan rpcReturnType
+	RPCReturnMap   map[string]chan rpcReturnType
+	RPCReturnMutex sync.Mutex
 
 	RPCReplyTo string
 
@@ -244,12 +247,20 @@ func (mq *KoinosMQ) SendBroadcast(contentType string, topic string, args []byte)
 	return err
 }
 
-// SendRPC sends an rpc message
-func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
+// SendRPCWithContext sends an rpc with a context
+func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
+	if !mq.conn.IsOpen() {
+		return nil, errors.New("AMQP connection is not open")
+	}
+
 	corrID := randomString(32)
 	returnChan := make(chan rpcReturnType)
 
-	mq.conn.RPCReturnMap[corrID] = returnChan
+	{
+		mq.conn.RPCReturnMutex.Lock()
+		defer mq.conn.RPCReturnMutex.Unlock()
+		mq.conn.RPCReturnMap[corrID] = returnChan
+	}
 
 	err := mq.conn.AmqpChan.Publish(
 		rpcExchangeName,
@@ -267,19 +278,30 @@ func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]
 	var result []byte = nil
 
 	if err == nil {
-		// Wait on channel to get result bytes
-		rpcResult := <-returnChan
-
-		if rpcResult.err != nil {
-			err = rpcResult.err
-		} else {
-			result = rpcResult.data
+		// Wait on channel to get result bytes or context to timeout
+		select {
+		case rpcResult := <-returnChan:
+			if rpcResult.err != nil {
+				err = rpcResult.err
+			} else {
+				result = rpcResult.data
+			}
+		case <-ctx.Done():
+			err = ctx.Err()
 		}
+
 	}
 
+	mq.conn.RPCReturnMutex.Lock()
+	defer mq.conn.RPCReturnMutex.Unlock()
 	delete(mq.conn.RPCReturnMap, corrID)
 
 	return result, err
+}
+
+// SendRPC sends an rpc message
+func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
+	return mq.SendRPCWithContext(context.Background(), contentType, rpcType, args)
 }
 
 /**
@@ -406,6 +428,10 @@ func (c *connection) Open(addr string, handlers *HandlerTable) error {
 	// TODO: Handle RPC Return expiration in separate thread
 
 	return nil
+}
+
+func (c *connection) IsOpen() bool {
+	return c.AmqpConn != nil && c.AmqpChan != nil
 }
 
 // ConsumeRPC creates a delivery channel for the given RPC type.
@@ -597,7 +623,11 @@ func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 		delivery.Ack(true)
 		var result rpcReturnType
 		result.data = delivery.Body
-		c.RPCReturnMap[delivery.CorrelationId] <- result
+		c.RPCReturnMutex.Lock()
+		defer c.RPCReturnMutex.Unlock()
+		if val, ok := c.RPCReturnMap[delivery.CorrelationId]; ok {
+			val <- result
+		}
 	}
 	log.Printf("Exit ConsumeRPCReturnLoop\n")
 }
