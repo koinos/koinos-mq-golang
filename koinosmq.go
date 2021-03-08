@@ -237,8 +237,8 @@ func randomString(l int) string {
 	return string(bytes)
 }
 
-// SendBroadcast sends a broadcast message
-func (mq *KoinosMQ) SendBroadcast(contentType string, topic string, args []byte) error {
+// Broadcast a message via AMQP
+func (mq *KoinosMQ) Broadcast(contentType string, topic string, args []byte) error {
 	err := mq.conn.AmqpChan.Publish(
 		broadcastExchangeName,
 		topic,
