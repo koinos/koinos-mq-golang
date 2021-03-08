@@ -47,6 +47,12 @@ type HandlerTable struct {
 	RPCReturnNumConsumers int
 }
 
+// RPCCallResult is the result of an rpc call
+type RPCCallResult struct {
+	Result []byte
+	Error  error
+}
+
 const (
 	broadcastExchangeName  = "koinos_event"
 	broadcastKeyName       = ""
@@ -247,10 +253,16 @@ func (mq *KoinosMQ) SendBroadcast(contentType string, topic string, args []byte)
 	return err
 }
 
-// SendRPCWithContext sends an rpc with a context
-func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
+func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+	callResult := RPCCallResult{
+		Result: nil,
+		Error:  nil,
+	}
+
 	if !mq.conn.IsOpen() {
-		return nil, errors.New("AMQP connection is not open")
+		callResult.Error = errors.New("AMQP connection is not open")
+		done <- &callResult
+		return
 	}
 
 	corrID := randomString(32)
@@ -262,7 +274,7 @@ func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, 
 		mq.conn.RPCReturnMap[corrID] = returnChan
 	}
 
-	err := mq.conn.AmqpChan.Publish(
+	callResult.Error = mq.conn.AmqpChan.Publish(
 		rpcExchangeName,
 		rpcQueuePrefix+rpcType,
 		false,
@@ -275,19 +287,17 @@ func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, 
 		},
 	)
 
-	var result []byte = nil
-
-	if err == nil {
+	if callResult.Error == nil {
 		// Wait on channel to get result bytes or context to timeout
 		select {
 		case rpcResult := <-returnChan:
 			if rpcResult.err != nil {
-				err = rpcResult.err
+				callResult.Error = rpcResult.err
 			} else {
-				result = rpcResult.data
+				callResult.Result = rpcResult.data
 			}
 		case <-ctx.Done():
-			err = ctx.Err()
+			callResult.Error = ctx.Err()
 		}
 
 	}
@@ -296,12 +306,30 @@ func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, 
 	defer mq.conn.RPCReturnMutex.Unlock()
 	delete(mq.conn.RPCReturnMap, corrID)
 
-	return result, err
+	done <- &callResult
 }
 
-// SendRPC sends an rpc message
+// SendRPCWithContext makes a block RPC call with timeout of the given context
+func (mq *KoinosMQ) SendRPCWithContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
+	done := make(chan *RPCCallResult)
+	go mq.makeRPCCall(ctx, contentType, rpcType, args, done)
+	result := <-done
+	return result.Result, result.Error
+}
+
+// SendRPC makes a blocking RPC call with no timeout
 func (mq *KoinosMQ) SendRPC(contentType string, rpcType string, args []byte) ([]byte, error) {
 	return mq.SendRPCWithContext(context.Background(), contentType, rpcType, args)
+}
+
+// GoRPCContext asynchronously makes an RPC call with timeout of the given context
+func (mq *KoinosMQ) GoRPCContext(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+	go mq.makeRPCCall(ctx, contentType, rpcType, args, done)
+}
+
+// GoRPC asynchronously makes an RPC call with no timeout
+func (mq *KoinosMQ) GoRPC(contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+	mq.GoRPCContext(context.Background(), contentType, rpcType, args, done)
 }
 
 /**
