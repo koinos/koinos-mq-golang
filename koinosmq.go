@@ -266,13 +266,11 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 	}
 
 	corrID := randomString(32)
-	returnChan := make(chan rpcReturnType)
+	returnChan := make(chan rpcReturnType, 1)
 
-	{
-		mq.conn.RPCReturnMutex.Lock()
-		defer mq.conn.RPCReturnMutex.Unlock()
-		mq.conn.RPCReturnMap[corrID] = returnChan
-	}
+	mq.conn.RPCReturnMutex.Lock()
+	mq.conn.RPCReturnMap[corrID] = returnChan
+	mq.conn.RPCReturnMutex.Unlock()
 
 	callResult.Error = mq.conn.AmqpChan.Publish(
 		rpcExchangeName,
@@ -303,8 +301,8 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 	}
 
 	mq.conn.RPCReturnMutex.Lock()
-	defer mq.conn.RPCReturnMutex.Unlock()
 	delete(mq.conn.RPCReturnMap, corrID)
+	mq.conn.RPCReturnMutex.Unlock()
 
 	done <- &callResult
 }
@@ -651,10 +649,19 @@ func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 		delivery.Ack(true)
 		var result rpcReturnType
 		result.data = delivery.Body
+		var returnChan chan rpcReturnType
+		hasReturnChan := false
+
 		c.RPCReturnMutex.Lock()
-		defer c.RPCReturnMutex.Unlock()
 		if val, ok := c.RPCReturnMap[delivery.CorrelationId]; ok {
-			val <- result
+			returnChan = val
+			hasReturnChan = true
+			delete(c.RPCReturnMap, delivery.CorrelationId)
+		}
+		c.RPCReturnMutex.Unlock()
+
+		if hasReturnChan {
+			returnChan <- result
 		}
 	}
 	log.Printf("Exit ConsumeRPCReturnLoop\n")
