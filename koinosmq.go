@@ -247,7 +247,9 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 		Error:  nil,
 	}
 
-	if !mq.conn.IsOpen() {
+	conn := mq.conn
+
+	if (conn == nil) || !conn.IsOpen() {
 		callResult.Error = errors.New("AMQP connection is not open")
 		done <- &callResult
 		return
@@ -256,11 +258,11 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 	corrID := randomString(32)
 	returnChan := make(chan rpcReturnType, 1)
 
-	mq.conn.RPCReturnMutex.Lock()
-	mq.conn.RPCReturnMap[corrID] = returnChan
-	mq.conn.RPCReturnMutex.Unlock()
+	conn.RPCReturnMutex.Lock()
+	conn.RPCReturnMap[corrID] = returnChan
+	conn.RPCReturnMutex.Unlock()
 
-	callResult.Error = mq.conn.AmqpChan.Publish(
+	callResult.Error = conn.AmqpChan.Publish(
 		rpcExchangeName,
 		rpcQueuePrefix+rpcType,
 		false,
@@ -268,7 +270,7 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 		amqp.Publishing{
 			ContentType:   contentType,
 			CorrelationId: corrID,
-			ReplyTo:       mq.conn.RPCReplyTo,
+			ReplyTo:       conn.RPCReplyTo,
 			Body:          args,
 		},
 	)
@@ -288,9 +290,9 @@ func (mq *KoinosMQ) makeRPCCall(ctx context.Context, contentType string, rpcType
 
 	}
 
-	mq.conn.RPCReturnMutex.Lock()
-	delete(mq.conn.RPCReturnMap, corrID)
-	mq.conn.RPCReturnMutex.Unlock()
+	conn.RPCReturnMutex.Lock()
+	delete(conn.RPCReturnMap, corrID)
+	conn.RPCReturnMutex.Unlock()
 
 	done <- &callResult
 }
