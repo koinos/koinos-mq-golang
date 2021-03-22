@@ -536,7 +536,7 @@ func (c *connection) ConsumeBroadcast(topic string, numConsumers int) ([]<-chan 
 		result[i], err = c.AmqpChan.Consume(
 			broadcastQueue.Name, // Queue
 			"",                  // Consumer
-			false,               // AutoAck
+			true,                // AutoAck
 			true,                // Exclusive
 			false,               // NoLocal
 			false,               // NoWait
@@ -584,7 +584,7 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 		result[i], err = c.AmqpChan.Consume(
 			queue.Name, // Queue
 			"",         // Consumer
-			false,      // AutoAck
+			true,       // AutoAck
 			false,      // Exclusive
 			false,      // NoLocal
 			false,      // NoWait
@@ -636,7 +636,6 @@ func (c *connection) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, handler
 func (c *connection) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 	log.Printf("Enter ConsumeRPCReturnLoop\n")
 	for delivery := range consumer {
-		delivery.Ack(true)
 		var result rpcReturnType
 		result.data = delivery.Body
 		var returnChan chan rpcReturnType
