@@ -54,13 +54,9 @@ type RPCCallResult struct {
 }
 
 const (
-	broadcastExchangeName  = "koinos_event"
-	broadcastKeyName       = ""
-	rpcExchangeName        = "koinos_rpc"
-	rpcKeyName             = ""
-	rpcQueuePrefix         = "koinos_rpc_"
-	rpcReplyToExchangeName = "koinos_rpc_reply"
-	rpcReplyToPrefix       = "koinos_rpc_reply_"
+	broadcastExchangeName = "koinos.event"
+	rpcExchangeName       = "koinos.rpc"
+	rpcQueuePrefix        = "koinos.rpc."
 )
 
 // KoinosMQ AMPQ Golang Wrapper
@@ -399,20 +395,6 @@ func (c *connection) Open(addr string, handlers *HandlerTable) error {
 		return err
 	}
 
-	err = c.AmqpChan.ExchangeDeclare(
-		rpcReplyToExchangeName, // Name
-		"direct",               // type
-		true,                   // durable
-		false,                  // auto-deleted
-		false,                  // internal
-		false,                  // no-wait
-		nil,                    // arguments
-	)
-	if err != nil {
-		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
-		return err
-	}
-
 	for rpcType := range handlers.RPCHandlerMap {
 		consumers, err := c.ConsumeRPC(rpcType, handlers.RPCNumConsumers)
 		if err != nil {
@@ -453,7 +435,7 @@ func (c *connection) IsOpen() bool {
 // ConsumeRPC creates a delivery channel for the given RPC type.
 func (c *connection) ConsumeRPC(rpcType string, numConsumers int) ([]<-chan amqp.Delivery, error) {
 
-	rpcQueueName := "koinos_rpc_" + rpcType
+	rpcQueueName := rpcQueuePrefix + rpcType
 
 	rpcQueue, err := c.AmqpChan.QueueDeclare(
 		rpcQueueName,
@@ -569,7 +551,7 @@ func (c *connection) ConsumeRPCReturn(numConsumers int) ([]<-chan amqp.Delivery,
 	err = c.AmqpChan.QueueBind(
 		queue.Name,
 		queue.Name,
-		rpcReplyToExchangeName,
+		rpcExchangeName,
 		false,
 		nil,
 	)
@@ -607,7 +589,7 @@ func (c *connection) ConsumeRPCLoop(consumer <-chan amqp.Delivery, handlers *Han
 		outputPub := handlers.HandleRPCDelivery(rpcType, &delivery)
 
 		err := RespChan.Publish(
-			"",               // Exchange
+			rpcExchangeName,  // Exchange
 			delivery.ReplyTo, // Routing key (channel name for default exchange)
 			false,            // Mandatory
 			false,            // Immediate
