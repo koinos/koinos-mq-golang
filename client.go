@@ -32,12 +32,12 @@ type Client struct {
 	/**
 	 * Number of RPC Return consumers
 	 */
-	RPCReturnNumConsumers int
+	rpcReturnNumConsumers int
 
-	RPCReturnMap   map[string]chan rpcReturnType
-	RPCReturnMutex sync.Mutex
+	rpcReturnMap   map[string]chan rpcReturnType
+	rpcReturnMutex sync.Mutex
 
-	RPCReplyTo string
+	rpcReplyTo string
 
 	conn *connection
 }
@@ -52,7 +52,7 @@ func NewClient(addr string) *Client {
 	client := new(Client)
 	client.Address = addr
 
-	client.RPCReturnNumConsumers = 1
+	client.rpcReturnNumConsumers = 1
 
 	return client
 }
@@ -67,7 +67,7 @@ func (client *Client) Start() {
 // This sets the number of parallel goroutines that consume the respective AMQP queues.
 // Must be called before Connect().
 func (client *Client) SetNumConsumers(rpcReturnNumConsumers int) {
-	client.RPCReturnNumConsumers = rpcReturnNumConsumers
+	client.rpcReturnNumConsumers = rpcReturnNumConsumers
 }
 
 // ConnectLoop is the main entry point.
@@ -87,12 +87,12 @@ func (client *Client) ConnectLoop() {
 			err := client.conn.Open(client.Address)
 
 			if err == nil {
-				consumers, replyTo, err := client.conn.CreateRPCReturnChannels(client.RPCReturnNumConsumers)
+				consumers, replyTo, err := client.conn.CreateRPCReturnChannels(client.rpcReturnNumConsumers)
 				if err != nil {
 					goto Delay
 				}
 
-				client.RPCReplyTo = replyTo
+				client.rpcReplyTo = replyTo
 				for _, consumer := range consumers {
 					go client.ConsumeRPCReturnLoop(consumer)
 				}
@@ -128,7 +128,7 @@ func (client *Client) ConnectLoop() {
 // newConnection creates a new Connection
 func (client *Client) newConnection() *connection {
 	conn := new(connection)
-	client.RPCReturnMap = make(map[string]chan rpcReturnType)
+	client.rpcReturnMap = make(map[string]chan rpcReturnType)
 	return conn
 }
 
@@ -177,9 +177,9 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	corrID := randomString(32)
 	returnChan := make(chan rpcReturnType, 1)
 
-	client.RPCReturnMutex.Lock()
-	client.RPCReturnMap[corrID] = returnChan
-	client.RPCReturnMutex.Unlock()
+	client.rpcReturnMutex.Lock()
+	client.rpcReturnMap[corrID] = returnChan
+	client.rpcReturnMutex.Unlock()
 
 	callResult.Error = conn.AmqpChan.Publish(
 		rpcExchangeName,
@@ -189,7 +189,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 		amqp.Publishing{
 			ContentType:   contentType,
 			CorrelationId: corrID,
-			ReplyTo:       client.RPCReplyTo,
+			ReplyTo:       client.rpcReplyTo,
 			Body:          args,
 		},
 	)
@@ -209,9 +209,9 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 
 	}
 
-	client.RPCReturnMutex.Lock()
-	delete(client.RPCReturnMap, corrID)
-	client.RPCReturnMutex.Unlock()
+	client.rpcReturnMutex.Lock()
+	delete(client.rpcReturnMap, corrID)
+	client.rpcReturnMutex.Unlock()
 
 	done <- &callResult
 }
@@ -248,13 +248,13 @@ func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 		var returnChan chan rpcReturnType
 		hasReturnChan := false
 
-		client.RPCReturnMutex.Lock()
-		if val, ok := client.RPCReturnMap[delivery.CorrelationId]; ok {
+		client.rpcReturnMutex.Lock()
+		if val, ok := client.rpcReturnMap[delivery.CorrelationId]; ok {
 			returnChan = val
 			hasReturnChan = true
-			delete(client.RPCReturnMap, delivery.CorrelationId)
+			delete(client.rpcReturnMap, delivery.CorrelationId)
 		}
-		client.RPCReturnMutex.Unlock()
+		client.rpcReturnMutex.Unlock()
 
 		if hasReturnChan {
 			returnChan <- result
