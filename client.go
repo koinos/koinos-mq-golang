@@ -3,11 +3,11 @@ package koinosmq
 import (
 	"context"
 	"errors"
-	"log"
 	"math/rand"
 	"sync"
 	"time"
 
+	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
 )
 
@@ -80,7 +80,7 @@ func (client *Client) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Printf("Connecting to AMQP server %v\n", client.Address)
+		log.Infof("Connecting to AMQP server %v", client.Address)
 
 		for {
 			client.conn = client.newConnection()
@@ -241,7 +241,7 @@ func (client *Client) GoRPC(contentType string, rpcType string, args []byte, don
 
 // ConsumeRPCReturnLoop consumption loop for RPC Return. Normally, the caller would run this function in a goroutine.
 func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
-	log.Printf("Enter ConsumeRPCReturnLoop\n")
+	log.Debug("Enter ConsumeRPCReturnLoop")
 	for delivery := range consumer {
 		var result rpcReturnType
 		result.data = delivery.Body
@@ -260,5 +260,5 @@ func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 			returnChan <- result
 		}
 	}
-	log.Printf("Exit ConsumeRPCReturnLoop\n")
+	log.Debug("Exit ConsumeRPCReturnLoop\n")
 }
