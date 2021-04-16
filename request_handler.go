@@ -1,9 +1,9 @@
 package koinosmq
 
 import (
-	"log"
 	"time"
 
+	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
 )
 
@@ -102,7 +102,7 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Printf("Connecting to AMQP server %v\n", requestHandler.Address)
+		log.Infof("Connecting to AMQP server %v", requestHandler.Address)
 
 		for {
 			requestHandler.conn = requestHandler.newConnection()
@@ -165,7 +165,7 @@ func (requestHandler *RequestHandler) newConnection() *connection {
 
 // ConsumeRPCLoop consumption loop for RPC. Normally, the caller would run this function in a goroutine.
 func (requestHandler *RequestHandler) ConsumeRPCLoop(consumer <-chan amqp.Delivery, rpcType string, RespChan *amqp.Channel) {
-	log.Printf("Enter ConsumeRPCLoop\n")
+	log.Debug("Enter ConsumeRPCLoop")
 	for delivery := range consumer {
 		outputPub := requestHandler.HandleRPCDelivery(rpcType, &delivery)
 
@@ -177,22 +177,22 @@ func (requestHandler *RequestHandler) ConsumeRPCLoop(consumer <-chan amqp.Delive
 			*outputPub,       // Message
 		)
 		if err != nil {
-			log.Printf("Couldn't deliver message, error is %v\n", err)
+			log.Errorf("Couldn't deliver message, error is %v", err)
 			// TODO: Should an error close the connection?
 		} else {
 			delivery.Ack(true)
 		}
 	}
-	log.Printf("Exit ConsumeRPCLoop\n")
+	log.Debug("Exit ConsumeRPCLoop")
 }
 
 // ConsumeBroadcastLoop consumption loop for broadcast. Normally, the caller would run this function in a goroutine.
 func (requestHandler *RequestHandler) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, topic string) {
-	log.Printf("Enter ConsumeBroadcastLoop\n")
+	log.Debug("Enter ConsumeBroadcastLoop")
 	for delivery := range consumer {
 		requestHandler.HandleBroadcastDelivery(topic, &delivery)
 	}
-	log.Printf("Exit ConsumeBroadcastLoop\n")
+	log.Debug("Exit ConsumeBroadcastLoop")
 }
 
 // HandleRPCDelivery handles a single RPC delivery.
@@ -205,7 +205,7 @@ func (requestHandler *RequestHandler) HandleRPCDelivery(rpcType string, delivery
 	handler := requestHandler.rpcHandlerMap[rpcType]
 	output, err := handler(rpcType, delivery.Body)
 	if err != nil {
-		log.Printf("Error in RPC handler\n")
+		log.Error("Error in RPC handler")
 		return nil
 	}
 	outputPub := amqp.Publishing{

@@ -2,8 +2,8 @@ package koinosmq
 
 import (
 	"errors"
-	"log"
 
+	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
 )
 
@@ -67,15 +67,15 @@ func (c *connection) Open(addr string) error {
 	defer closeIfError()
 
 	// We keep the connection and channel local until the connection's fully set up.
-	log.Printf("Dialing AMQP server %s\n", addr)
+	log.Infof("Dialing AMQP server %s", addr)
 	c.AmqpConn, err = amqp.Dial(addr)
 	if err != nil {
-		log.Printf("AMQP error dialing server: %v\n", err)
+		log.Errorf("AMQP error dialing server: %v", err)
 		return err
 	}
 	c.AmqpChan, err = c.AmqpConn.Channel()
 	if err != nil {
-		log.Printf("AMQP error connecting to channel: %v\n", err)
+		log.Errorf("AMQP error connecting to channel: %v", err)
 		return err
 	}
 
@@ -92,7 +92,7 @@ func (c *connection) Open(addr string) error {
 		nil,                   // arguments
 	)
 	if err != nil {
-		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		log.Errorf("AMQP error calling ExchangeDeclare: %v", err)
 		return err
 	}
 
@@ -106,7 +106,7 @@ func (c *connection) Open(addr string) error {
 		nil,             // arguments
 	)
 	if err != nil {
-		log.Printf("AMQP error calling ExchangeDeclare: %v\n", err)
+		log.Errorf("AMQP error calling ExchangeDeclare: %v", err)
 		return err
 	}
 
@@ -133,7 +133,7 @@ func (c *connection) CreateRPCChannels(rpcType string, numConsumers int) ([]<-ch
 		nil,   // Arguments
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		log.Errorf("AMQP error calling QueueDeclare: %v", err)
 		return nil, err
 	}
 
@@ -145,7 +145,7 @@ func (c *connection) CreateRPCChannels(rpcType string, numConsumers int) ([]<-ch
 		nil,
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueBind: %v\n", err)
+		log.Errorf("AMQP error calling QueueBind: %v", err)
 		return nil, err
 	}
 
@@ -183,7 +183,7 @@ func (c *connection) CreateBroadcastChannels(topic string, numConsumers int) ([]
 		nil,   // Arguments
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueDeclare: %v\n", err)
+		log.Errorf("AMQP error calling QueueDeclare: %v", err)
 		return nil, err
 	}
 
@@ -195,7 +195,7 @@ func (c *connection) CreateBroadcastChannels(topic string, numConsumers int) ([]
 		nil,
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueBind: %v\n", err)
+		log.Errorf("AMQP error calling QueueBind: %v", err)
 		return nil, err
 	}
 
@@ -231,7 +231,7 @@ func (c *connection) CreateRPCReturnChannels(numConsumers int) ([]<-chan amqp.De
 		nil,   // Arguments
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueDeclare: %v", err)
+		log.Errorf("AMQP error calling QueueDeclare: %v", err)
 		return nil, "", err
 	}
 
@@ -243,7 +243,7 @@ func (c *connection) CreateRPCReturnChannels(numConsumers int) ([]<-chan amqp.De
 		nil,
 	)
 	if err != nil {
-		log.Printf("AMQP error calling QueueBind: %v\n", err)
+		log.Errorf("AMQP error calling QueueBind: %v", err)
 		return nil, "", err
 	}
 
