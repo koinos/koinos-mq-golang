@@ -104,7 +104,7 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Infof("Connecting to AMQP server %v", requestHandler.Address)
+		log.Infof("Connecting request handler to AMQP server %v", requestHandler.Address)
 
 		for {
 			requestHandler.conn = requestHandler.newConnection()
@@ -133,6 +133,7 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 						go requestHandler.ConsumeBroadcastLoop(consumer, topic)
 					}
 				}
+				log.Infof("Request handler connected")
 				break
 			}
 		Delay:
