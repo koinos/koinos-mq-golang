@@ -229,7 +229,14 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	timeout := retry.PollTimeout()
 
 	for {
-		callResult = client.tryRPC(ctx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
+		cancelled := ctx.Err()
+		if cancelled != nil {
+			return
+		}
+
+		callCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
 		if callResult.Error == nil {
 			break
 		}
@@ -255,8 +262,12 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 func (client *Client) RPCContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
 	done := make(chan *RPCCallResult)
 	go client.makeRPCCall(ctx, contentType, rpcType, args, done)
-	result := <-done
-	return result.Result, result.Error
+	select {
+	case result := <-done:
+		return result.Result, result.Error
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // RPC makes a blocking RPC call with no timeout
