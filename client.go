@@ -12,6 +12,10 @@ import (
 	"github.com/streadway/amqp"
 )
 
+const (
+	rpcAttemptTimeout = (1 * time.Second)
+)
+
 // RPCCallResult is the result of an rpc call
 type RPCCallResult struct {
 	Result []byte
@@ -211,7 +215,6 @@ func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType st
 		case <-ctx.Done():
 			callResult.Error = ctx.Err()
 		}
-
 	}
 
 	client.rpcReturnMutex.Lock()
@@ -229,12 +232,14 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	timeout := retry.PollTimeout()
 
 	for {
+		// If the context has been cancelled, quit without a result
 		cancelled := ctx.Err()
 		if cancelled != nil {
 			return
 		}
 
-		callCtx, cancel := context.WithTimeout(ctx, time.Second)
+		// Make a child context with a small timeout, and call the
+		callCtx, cancel := context.WithTimeout(ctx, rpcAttemptTimeout)
 		defer cancel()
 		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
 		if callResult.Error == nil {

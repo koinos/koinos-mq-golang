@@ -50,17 +50,23 @@ type ExponentialBackoffRetryPolicy struct {
 	nextTimeout time.Duration
 }
 
-// PollTimeout for this policy simply returns the next timeout value
+// PollTimeout for this policy simply returns min(nextTimeout, MaxTimeout)
 func (rp *ExponentialBackoffRetryPolicy) PollTimeout() time.Duration {
+	if rp.nextTimeout > rp.MaxTimeout {
+		return rp.MaxTimeout
+	}
+
 	return rp.nextTimeout
 }
 
 // CheckRetry for this policy will return whether or not a retry is reuqested, and how long to timeout
 func (rp *ExponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+	// Simply clamp to MaxTimeout if exceeded
 	if rp.nextTimeout > rp.MaxTimeout {
-		return &CheckRetryResult{DoRetry: false}
+		return &CheckRetryResult{DoRetry: true, Timeout: rp.MaxTimeout}
 	}
 
+	// If not return current value, then increase it
 	res := &CheckRetryResult{DoRetry: true, Timeout: rp.nextTimeout}
 	rp.nextTimeout *= time.Duration(rp.Exponent)
 	return res
