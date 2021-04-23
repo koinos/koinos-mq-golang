@@ -1,6 +1,7 @@
 package koinosmq
 
 import (
+	"context"
 	"errors"
 
 	log "github.com/koinos/koinos-log-golang"
@@ -53,7 +54,21 @@ func (c *connection) Close() error {
 // Open and attempt to connection.
 //
 // Return error if connection attempt fails (i.e., no retry).
-func (c *connection) Open(addr string) error {
+func (c *connection) Open(ctx context.Context, addr string) error {
+	doneChan := make(chan error, 1)
+	go func() {
+		doneChan <- c.openImpl(addr)
+	}()
+
+	select {
+	case err := <-doneChan:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (c *connection) openImpl(addr string) error {
 	if (c.AmqpConn != nil) || (c.AmqpChan != nil) {
 		return errors.New("Attempted to reuse connection")
 	}

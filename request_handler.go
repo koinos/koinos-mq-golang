@@ -1,6 +1,7 @@
 package koinosmq
 
 import (
+	"context"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
@@ -95,6 +96,7 @@ func (requestHandler *RequestHandler) SetNumConsumers(rpcNumConsumers int, broad
 // ConnectLoop is the main entry point.
 func (requestHandler *RequestHandler) ConnectLoop() {
 	const (
+		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
 		RetryMaxDelay      = 25
 		RetryDelayPerRetry = 2
@@ -102,11 +104,14 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Infof("Connecting to AMQP server %v", requestHandler.Address)
+		log.Infof("Connecting request handler to AMQP server %v", requestHandler.Address)
 
 		for {
 			requestHandler.conn = requestHandler.newConnection()
-			err := requestHandler.conn.Open(requestHandler.Address)
+			ctx, cancel := context.WithTimeout(context.Background(), ConnectionTimeout*time.Second)
+			defer cancel()
+			err := requestHandler.conn.Open(ctx, requestHandler.Address)
+
 			if err == nil {
 				// Start handler consumption
 				for rpcType := range requestHandler.rpcHandlerMap {
@@ -128,6 +133,7 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 						go requestHandler.ConsumeBroadcastLoop(consumer, topic)
 					}
 				}
+				log.Infof("Request handler connected")
 				break
 			}
 		Delay:

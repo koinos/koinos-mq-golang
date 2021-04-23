@@ -73,6 +73,7 @@ func (client *Client) SetNumConsumers(rpcReturnNumConsumers int) {
 // ConnectLoop is the main entry point.
 func (client *Client) ConnectLoop() {
 	const (
+		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
 		RetryMaxDelay      = 25
 		RetryDelayPerRetry = 2
@@ -80,11 +81,13 @@ func (client *Client) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Infof("Connecting to AMQP server %v", client.Address)
+		log.Infof("Connecting client to AMQP server %v", client.Address)
 
 		for {
 			client.conn = client.newConnection()
-			err := client.conn.Open(client.Address)
+			ctx, cancel := context.WithTimeout(context.Background(), ConnectionTimeout*time.Second)
+			defer cancel()
+			err := client.conn.Open(ctx, client.Address)
 
 			if err == nil {
 				consumers, replyTo, err := client.conn.CreateRPCReturnChannels(client.rpcReturnNumConsumers)
@@ -96,6 +99,8 @@ func (client *Client) ConnectLoop() {
 				for _, consumer := range consumers {
 					go client.ConsumeRPCReturnLoop(consumer)
 				}
+
+				log.Infof("Client connected")
 				break
 			}
 		Delay:
