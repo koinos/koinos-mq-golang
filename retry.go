@@ -44,14 +44,16 @@ func (rp *NoRetryPolicy) PollTimeout() time.Duration {
 	return noRetryTimeout
 }
 
+// NoRetryFactory is a factory object for no retry policy
 type NoRetryFactory struct {
 }
 
+// CreateInstance creates the policy
 func (f *NoRetryFactory) CreateInstance() RetryPolicy {
 	return &NoRetryPolicy{}
 }
 
-// ExponentialBackoffRetryPolicy will retry with exponentially increasing timeouts
+// ExponentialBackoffPolicy will retry with exponentially increasing timeouts
 type ExponentialBackoffPolicy struct {
 	MaxTimeout time.Duration
 	Exponent   float32
@@ -81,19 +83,21 @@ func (rp *ExponentialBackoffPolicy) CheckRetry(callResult *RPCCallResult) *Check
 	return res
 }
 
+// ExponentialBackoffFactory is a factory object for exponential backoff policy
 type ExponentialBackoffFactory struct {
 }
 
+// CreateInstance creates the policy
 func (f *ExponentialBackoffFactory) CreateInstance() RetryPolicy {
 	return NewDefaultExponentialBackoffPolicy()
 }
 
-// NewExponentialBackoffRetryPolicy will create a new instance
+// NewExponentialBackoffPolicy will create a new instance
 func NewExponentialBackoffPolicy(initialTimeout time.Duration, maxTimeout time.Duration, exponent float32) *ExponentialBackoffPolicy {
 	return &ExponentialBackoffPolicy{MaxTimeout: maxTimeout, Exponent: exponent, nextTimeout: initialTimeout}
 }
 
-// NewDefaultExponentialBackoffRetryPolicy will create a new instance wsith default parameters
+// NewDefaultExponentialBackoffPolicy will create a new instance wsith default parameters
 func NewDefaultExponentialBackoffPolicy() *ExponentialBackoffPolicy {
 	return NewExponentialBackoffPolicy(defaultEBInitialTimeout, defaultEBMaxTimeout, defaultEBExponent)
 }
