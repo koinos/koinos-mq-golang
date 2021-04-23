@@ -16,7 +16,9 @@ type CheckRetryResult struct {
 }
 
 // RetryFactory represent a factory function for producing retry instances
-type RetryFactory func() RetryPolicy
+type RetryFactory interface {
+	CreateInstance() RetryPolicy
+}
 
 // RetryPolicy interface represents an implementation of an RPC call retry
 type RetryPolicy interface {
@@ -42,8 +44,15 @@ func (rp *NoRetryPolicy) PollTimeout() time.Duration {
 	return noRetryTimeout
 }
 
+type NoRetryFactory struct {
+}
+
+func (f *NoRetryFactory) CreateInstance() RetryPolicy {
+	return &NoRetryPolicy{}
+}
+
 // ExponentialBackoffRetryPolicy will retry with exponentially increasing timeouts
-type ExponentialBackoffRetryPolicy struct {
+type ExponentialBackoffPolicy struct {
 	MaxTimeout time.Duration
 	Exponent   float32
 
@@ -51,7 +60,7 @@ type ExponentialBackoffRetryPolicy struct {
 }
 
 // PollTimeout for this policy simply returns min(nextTimeout, MaxTimeout)
-func (rp *ExponentialBackoffRetryPolicy) PollTimeout() time.Duration {
+func (rp *ExponentialBackoffPolicy) PollTimeout() time.Duration {
 	if rp.nextTimeout > rp.MaxTimeout {
 		return rp.MaxTimeout
 	}
@@ -60,7 +69,7 @@ func (rp *ExponentialBackoffRetryPolicy) PollTimeout() time.Duration {
 }
 
 // CheckRetry for this policy will return whether or not a retry is reuqested, and how long to timeout
-func (rp *ExponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *ExponentialBackoffPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
 	// Simply clamp to MaxTimeout if exceeded
 	if rp.nextTimeout > rp.MaxTimeout {
 		return &CheckRetryResult{DoRetry: true, Timeout: rp.MaxTimeout}
@@ -72,12 +81,19 @@ func (rp *ExponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *
 	return res
 }
 
+type ExponentialBackoffFactory struct {
+}
+
+func (f *ExponentialBackoffFactory) CreateInstance() RetryPolicy {
+	return NewDefaultExponentialBackoffPolicy()
+}
+
 // NewExponentialBackoffRetryPolicy will create a new instance
-func NewExponentialBackoffRetryPolicy(initialTimeout time.Duration, maxTimeout time.Duration, exponent float32) *ExponentialBackoffRetryPolicy {
-	return &ExponentialBackoffRetryPolicy{MaxTimeout: maxTimeout, Exponent: exponent, nextTimeout: initialTimeout}
+func NewExponentialBackoffPolicy(initialTimeout time.Duration, maxTimeout time.Duration, exponent float32) *ExponentialBackoffPolicy {
+	return &ExponentialBackoffPolicy{MaxTimeout: maxTimeout, Exponent: exponent, nextTimeout: initialTimeout}
 }
 
 // NewDefaultExponentialBackoffRetryPolicy will create a new instance wsith default parameters
-func NewDefaultExponentialBackoffRetryPolicy() *ExponentialBackoffRetryPolicy {
-	return NewExponentialBackoffRetryPolicy(defaultEBInitialTimeout, defaultEBMaxTimeout, defaultEBExponent)
+func NewDefaultExponentialBackoffPolicy() *ExponentialBackoffPolicy {
+	return NewExponentialBackoffPolicy(defaultEBInitialTimeout, defaultEBMaxTimeout, defaultEBExponent)
 }

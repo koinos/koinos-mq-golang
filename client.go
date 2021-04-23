@@ -228,7 +228,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	var callResult *RPCCallResult
 
 	// Ask the retry factory for a new policy instance
-	retry := client.rpcRetryPolicy()
+	retry := client.rpcRetryPolicy.CreateInstance()
 	timeout := retry.PollTimeout()
 
 	for {
@@ -238,10 +238,11 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 			return
 		}
 
-		// Make a child context with a small timeout, and call the
+		// Make a child context with a small timeout, and call the RPC
 		callCtx, cancel := context.WithTimeout(ctx, rpcAttemptTimeout)
 		defer cancel()
 		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
+		// If there were no errors, we are done
 		if callResult.Error == nil {
 			break
 		}
