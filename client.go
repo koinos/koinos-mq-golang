@@ -3,6 +3,7 @@ package koinosmq
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -164,7 +165,7 @@ func (client *Client) Broadcast(contentType string, topic string, args []byte) e
 	return err
 }
 
-func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType string, args []byte) *RPCCallResult {
+func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType string, expiration string, args []byte) *RPCCallResult {
 	callResult := RPCCallResult{
 		Result: nil,
 		Error:  nil,
@@ -194,6 +195,7 @@ func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType st
 			CorrelationId: corrID,
 			ReplyTo:       client.rpcReplyTo,
 			Body:          args,
+			Expiration:    expiration,
 		},
 	)
 
@@ -224,9 +226,10 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 
 	// Ask the retry factory for a new policy instance
 	retry := client.rpcRetryPolicy()
+	timeout := retry.PollTimeout()
 
 	for {
-		callResult = client.tryRPC(ctx, contentType, rpcType, args)
+		callResult = client.tryRPC(ctx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
 		if callResult.Error == nil {
 			break
 		}
@@ -234,11 +237,15 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 		// See if the policy requests a retry
 		retryResult := retry.CheckRetry(callResult)
 		if !retryResult.DoRetry {
+			log.Warnf("RPC failed with error: %v", callResult.Error)
 			break
 		}
 
 		// Sleep for the required amount of time
-		time.Sleep(retryResult.Timeout)
+		log.Warnf("RPC error: %v", callResult.Error)
+		log.Warnf("Trying again in %d seconds", int(retryResult.Timeout/time.Second))
+		timeout = retryResult.Timeout
+		time.Sleep(timeout)
 	}
 
 	done <- callResult
@@ -289,4 +296,9 @@ func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 		}
 	}
 	log.Debug("Exit ConsumeRPCReturnLoop\n")
+}
+
+// DurationToUnitString converts the given duration to an integer string in the given unit
+func DurationToUnitString(duration time.Duration, unit time.Duration) string {
+	return fmt.Sprint(int(duration / unit))
 }

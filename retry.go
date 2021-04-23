@@ -6,6 +6,7 @@ const (
 	defaultEBInitialTimeout = (time.Second * 1)
 	defaultEBMaxTimeout     = (time.Second * 30)
 	defaultEBExponent       = 2.0
+	noRetryTimeout          = (time.Second * 1)
 )
 
 // CheckRetryResult represents describes whether a retry is requested, and how long to timeout first
@@ -32,8 +33,13 @@ type NoRetryPolicy struct {
 }
 
 // CheckRetry for this policy will always return false
-func (rp NoRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *NoRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
 	return &CheckRetryResult{DoRetry: false}
+}
+
+// PollTimeout for this policy always returns a default value
+func (rp *NoRetryPolicy) PollTimeout() time.Duration {
+	return noRetryTimeout
 }
 
 // ExponentialBackoffRetryPolicy will retry with exponentially increasing timeouts
@@ -44,8 +50,13 @@ type ExponentialBackoffRetryPolicy struct {
 	nextTimeout time.Duration
 }
 
+// PollTimeout for this policy simply returns the next timeout value
+func (rp *ExponentialBackoffRetryPolicy) PollTimeout() time.Duration {
+	return rp.nextTimeout
+}
+
 // CheckRetry for this policy will return whether or not a retry is reuqested, and how long to timeout
-func (rp ExponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *ExponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
 	if rp.nextTimeout > rp.MaxTimeout {
 		return &CheckRetryResult{DoRetry: false}
 	}
