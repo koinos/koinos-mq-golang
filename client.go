@@ -39,6 +39,8 @@ type Client struct {
 
 	rpcReplyTo string
 
+	rpcRetryPolicy RetryFactory
+
 	conn *connection
 }
 
@@ -48,9 +50,11 @@ type rpcReturnType struct {
 }
 
 // NewClient factory method.
-func NewClient(addr string) *Client {
+func NewClient(addr string, rpcRetryPolicy RetryFactory) *Client {
 	client := new(Client)
 	client.Address = addr
+
+	client.rpcRetryPolicy = rpcRetryPolicy
 
 	client.rpcReturnNumConsumers = 1
 
@@ -160,7 +164,7 @@ func (client *Client) Broadcast(contentType string, topic string, args []byte) e
 	return err
 }
 
-func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType string, args []byte) *RPCCallResult {
 	callResult := RPCCallResult{
 		Result: nil,
 		Error:  nil,
@@ -170,8 +174,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 
 	if (conn == nil) || !conn.IsOpen() {
 		callResult.Error = errors.New("AMQP connection is not open")
-		done <- &callResult
-		return
+		return &callResult
 	}
 
 	corrID := randomString(32)
@@ -213,7 +216,32 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	delete(client.rpcReturnMap, corrID)
 	client.rpcReturnMutex.Unlock()
 
-	done <- &callResult
+	return &callResult
+}
+
+func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+	var callResult *RPCCallResult
+
+	// Ask the retry factory for a new policy instance
+	retry := client.rpcRetryPolicy()
+
+	for {
+		callResult = client.tryRPC(ctx, contentType, rpcType, args)
+		if callResult.Error == nil {
+			break
+		}
+
+		// See if the policy requests a retry
+		retryResult := retry.CheckRetry(callResult)
+		if !retryResult.DoRetry {
+			break
+		}
+
+		// Sleep for the required amount of time
+		time.Sleep(retryResult.Timeout)
+	}
+
+	done <- callResult
 }
 
 // RPCContext makes a block RPC call with timeout of the given context
