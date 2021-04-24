@@ -3,12 +3,17 @@ package koinosmq
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
 	"sync"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
+)
+
+const (
+	rpcAttemptTimeout = (1 * time.Second)
 )
 
 // RPCCallResult is the result of an rpc call
@@ -39,6 +44,8 @@ type Client struct {
 
 	rpcReplyTo string
 
+	rpcRetryPolicy RetryPolicy
+
 	conn *connection
 }
 
@@ -47,10 +54,14 @@ type rpcReturnType struct {
 	err  error
 }
 
+const ()
+
 // NewClient factory method.
-func NewClient(addr string) *Client {
+func NewClient(addr string, rpcRetryPolicy RetryPolicy) *Client {
 	client := new(Client)
 	client.Address = addr
+
+	client.rpcRetryPolicy = rpcRetryPolicy
 
 	client.rpcReturnNumConsumers = 1
 
@@ -165,7 +176,7 @@ func (client *Client) Broadcast(contentType string, topic string, args []byte) e
 	return err
 }
 
-func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType string, expiration string, args []byte) *RPCCallResult {
 	callResult := RPCCallResult{
 		Result: nil,
 		Error:  nil,
@@ -175,8 +186,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 
 	if (conn == nil) || !conn.IsOpen() {
 		callResult.Error = errors.New("AMQP connection is not open")
-		done <- &callResult
-		return
+		return &callResult
 	}
 
 	corrID := randomString(32)
@@ -196,6 +206,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 			CorrelationId: corrID,
 			ReplyTo:       client.rpcReplyTo,
 			Body:          args,
+			Expiration:    expiration,
 		},
 	)
 
@@ -211,22 +222,65 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 		case <-ctx.Done():
 			callResult.Error = ctx.Err()
 		}
-
 	}
 
 	client.rpcReturnMutex.Lock()
 	delete(client.rpcReturnMap, corrID)
 	client.rpcReturnMutex.Unlock()
 
-	done <- &callResult
+	return &callResult
+}
+
+func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
+	var callResult *RPCCallResult
+
+	// Ask the retry factory for a new policy instance
+	retry := getRetryPolicy(client.rpcRetryPolicy)
+	timeout := retry.PollTimeout()
+
+	for {
+		// If the context has been cancelled, quit without a result
+		cancelled := ctx.Err()
+		if cancelled != nil {
+			return
+		}
+
+		// Make a child context with a small timeout, and call the RPC
+		callCtx, cancel := context.WithTimeout(ctx, rpcAttemptTimeout)
+		defer cancel()
+		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
+		// If there were no errors, we are done
+		if callResult.Error == nil {
+			break
+		}
+
+		// See if the policy requests a retry
+		retryResult := retry.CheckRetry(callResult)
+		if !retryResult.DoRetry {
+			log.Warnf("RPC failed with error: %v", callResult.Error)
+			break
+		}
+
+		// Sleep for the required amount of time
+		log.Warnf("RPC error: %v", callResult.Error)
+		log.Warnf("Trying again in %d seconds", int(retryResult.Timeout/time.Second))
+		timeout = retryResult.Timeout
+		time.Sleep(timeout)
+	}
+
+	done <- callResult
 }
 
 // RPCContext makes a block RPC call with timeout of the given context
 func (client *Client) RPCContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
 	done := make(chan *RPCCallResult)
 	go client.makeRPCCall(ctx, contentType, rpcType, args, done)
-	result := <-done
-	return result.Result, result.Error
+	select {
+	case result := <-done:
+		return result.Result, result.Error
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // RPC makes a blocking RPC call with no timeout
@@ -266,4 +320,9 @@ func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
 		}
 	}
 	log.Debug("Exit ConsumeRPCReturnLoop\n")
+}
+
+// DurationToUnitString converts the given duration to an integer string in the given unit
+func DurationToUnitString(duration time.Duration, unit time.Duration) string {
+	return fmt.Sprint(int(duration / unit))
 }
