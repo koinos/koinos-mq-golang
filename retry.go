@@ -15,89 +15,91 @@ type CheckRetryResult struct {
 	Timeout time.Duration
 }
 
-// RetryFactory represent a factory function for producing retry instances
-type RetryFactory interface {
-	CreateInstance() RetryPolicy
-}
+// RetryPolicy is an enum
+type RetryPolicy int
 
-// RetryPolicy interface represents an implementation of an RPC call retry
-type RetryPolicy interface {
+const (
+	// NoRetry does not retry
+	NoRetry RetryPolicy = iota
+	// ExponentialBackoff retires forever, with exponentially increading sleep
+	ExponentialBackoff
+)
+
+type retryPolicyInterface interface {
+	SetOptions(interface{})
 	CheckRetry(*RPCCallResult) *CheckRetryResult
 	PollTimeout() time.Duration
+}
+
+func getRetryPolicy(policy RetryPolicy, options ...interface{}) retryPolicyInterface {
+	var rp retryPolicyInterface
+
+	switch policy {
+	case NoRetry:
+		rp = &noRetryPolicy{}
+	case ExponentialBackoff:
+		rp = &exponentialBackoffRetryPolicy{
+			options: ExponentialBackoffOptions{
+				MaxTimeout:  defaultEBInitialTimeout,
+				Exponent:    defaultEBExponent,
+				NextTimeout: defaultEBInitialTimeout,
+			},
+		}
+	default:
+		panic("Requested non-existent retry policy")
+	}
+
+	if len(options) > 0 {
+		rp.SetOptions(options[0])
+	}
+
+	return rp
 }
 
 // ----------------------------------------------------------------------------
 // RetryPolicy Implementations
 // ----------------------------------------------------------------------------
 
-// NoRetryPolicy will never retry
-type NoRetryPolicy struct {
+type noRetryPolicy struct {
 }
 
-// CheckRetry for this policy will always return false
-func (rp *NoRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *noRetryPolicy) SetOptions(interface{}) {}
+
+func (rp *noRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
 	return &CheckRetryResult{DoRetry: false}
 }
 
-// PollTimeout for this policy always returns a default value
-func (rp *NoRetryPolicy) PollTimeout() time.Duration {
+func (rp *noRetryPolicy) PollTimeout() time.Duration {
 	return noRetryTimeout
 }
 
-// NoRetryFactory is a factory object for no retry policy
-type NoRetryFactory struct {
+// ExponentialBackoffOptions are the options for the exponential backoff policy
+type ExponentialBackoffOptions struct {
+	MaxTimeout  time.Duration
+	Exponent    float32
+	NextTimeout time.Duration
 }
 
-// CreateInstance creates the policy
-func (f *NoRetryFactory) CreateInstance() RetryPolicy {
-	return &NoRetryPolicy{}
+type exponentialBackoffRetryPolicy struct {
+	options ExponentialBackoffOptions
 }
 
-// ExponentialBackoffPolicy will retry with exponentially increasing timeouts
-type ExponentialBackoffPolicy struct {
-	MaxTimeout time.Duration
-	Exponent   float32
-
-	nextTimeout time.Duration
+func (rp *exponentialBackoffRetryPolicy) SetOptions(o interface{}) {
+	if options, ok := o.(ExponentialBackoffOptions); ok {
+		rp.options = options
+	}
 }
 
-// PollTimeout for this policy simply returns min(nextTimeout, MaxTimeout)
-func (rp *ExponentialBackoffPolicy) PollTimeout() time.Duration {
-	if rp.nextTimeout > rp.MaxTimeout {
-		return rp.MaxTimeout
+func (rp *exponentialBackoffRetryPolicy) PollTimeout() time.Duration {
+	return rp.options.NextTimeout
+}
+
+func (rp *exponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+	if rp.options.NextTimeout > rp.options.MaxTimeout {
+		return &CheckRetryResult{DoRetry: false}
 	}
 
-	return rp.nextTimeout
-}
-
-// CheckRetry for this policy will return whether or not a retry is reuqested, and how long to timeout
-func (rp *ExponentialBackoffPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
-	// Simply clamp to MaxTimeout if exceeded
-	if rp.nextTimeout > rp.MaxTimeout {
-		return &CheckRetryResult{DoRetry: true, Timeout: rp.MaxTimeout}
-	}
-
-	// If not return current value, then increase it
-	res := &CheckRetryResult{DoRetry: true, Timeout: rp.nextTimeout}
-	rp.nextTimeout *= time.Duration(rp.Exponent)
+	res := &CheckRetryResult{DoRetry: true, Timeout: rp.options.NextTimeout}
+	rp.options.NextTimeout *= time.Duration(rp.options.Exponent)
 	return res
-}
-
-// ExponentialBackoffFactory is a factory object for exponential backoff policy
-type ExponentialBackoffFactory struct {
-}
-
-// CreateInstance creates the policy
-func (f *ExponentialBackoffFactory) CreateInstance() RetryPolicy {
-	return NewDefaultExponentialBackoffPolicy()
-}
-
-// NewExponentialBackoffPolicy will create a new instance
-func NewExponentialBackoffPolicy(initialTimeout time.Duration, maxTimeout time.Duration, exponent float32) *ExponentialBackoffPolicy {
-	return &ExponentialBackoffPolicy{MaxTimeout: maxTimeout, Exponent: exponent, nextTimeout: initialTimeout}
-}
-
-// NewDefaultExponentialBackoffPolicy will create a new instance wsith default parameters
-func NewDefaultExponentialBackoffPolicy() *ExponentialBackoffPolicy {
-	return NewExponentialBackoffPolicy(defaultEBInitialTimeout, defaultEBMaxTimeout, defaultEBExponent)
 }

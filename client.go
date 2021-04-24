@@ -44,7 +44,7 @@ type Client struct {
 
 	rpcReplyTo string
 
-	rpcRetryPolicy RetryFactory
+	rpcRetryPolicy RetryPolicy
 
 	conn *connection
 }
@@ -54,8 +54,10 @@ type rpcReturnType struct {
 	err  error
 }
 
+const ()
+
 // NewClient factory method.
-func NewClient(addr string, rpcRetryPolicy RetryFactory) *Client {
+func NewClient(addr string, rpcRetryPolicy RetryPolicy) *Client {
 	client := new(Client)
 	client.Address = addr
 
@@ -228,7 +230,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 	var callResult *RPCCallResult
 
 	// Ask the retry factory for a new policy instance
-	retry := client.rpcRetryPolicy.CreateInstance()
+	retry := getRetryPolicy(client.rpcRetryPolicy)
 	timeout := retry.PollTimeout()
 
 	for {
