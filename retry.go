@@ -95,11 +95,11 @@ func (rp *exponentialBackoffRetryPolicy) PollTimeout() time.Duration {
 }
 
 func (rp *exponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+	rp.options.NextTimeout *= time.Duration(rp.options.Exponent)
+
 	if rp.options.NextTimeout > rp.options.MaxTimeout {
-		return &CheckRetryResult{DoRetry: false}
+		rp.options.NextTimeout = rp.options.MaxTimeout
 	}
 
-	res := &CheckRetryResult{DoRetry: true, Timeout: rp.options.NextTimeout}
-	rp.options.NextTimeout *= time.Duration(rp.options.Exponent)
-	return res
+	return &CheckRetryResult{DoRetry: true, Timeout: rp.options.NextTimeout}
 }
