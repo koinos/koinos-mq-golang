@@ -40,7 +40,7 @@ func getRetryPolicy(policy RetryPolicy, options ...interface{}) retryPolicyInter
 	case ExponentialBackoff:
 		rp = &exponentialBackoffRetryPolicy{
 			options: ExponentialBackoffOptions{
-				MaxTimeout:  defaultEBInitialTimeout,
+				MaxTimeout:  defaultEBMaxTimeout,
 				Exponent:    defaultEBExponent,
 				NextTimeout: defaultEBInitialTimeout,
 			},
