@@ -27,7 +27,7 @@ const (
 
 type retryPolicyInterface interface {
 	SetOptions(interface{})
-	CheckRetry(*RPCCallResult) *CheckRetryResult
+	CheckRetry() *CheckRetryResult
 	PollTimeout() time.Duration
 }
 
@@ -65,7 +65,7 @@ type noRetryPolicy struct {
 
 func (rp *noRetryPolicy) SetOptions(interface{}) {}
 
-func (rp *noRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *noRetryPolicy) CheckRetry() *CheckRetryResult {
 	return &CheckRetryResult{DoRetry: false}
 }
 
@@ -94,8 +94,8 @@ func (rp *exponentialBackoffRetryPolicy) PollTimeout() time.Duration {
 	return rp.options.NextTimeout
 }
 
-func (rp *exponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
-	rp.options.NextTimeout *= time.Duration(rp.options.Exponent)
+func (rp *exponentialBackoffRetryPolicy) CheckRetry() *CheckRetryResult {
+	rp.options.NextTimeout = rp.options.NextTimeout * time.Duration(rp.options.Exponent)
 
 	if rp.options.NextTimeout > rp.options.MaxTimeout {
 		rp.options.NextTimeout = rp.options.MaxTimeout
