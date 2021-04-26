@@ -255,7 +255,7 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 		}
 
 		// See if the policy requests a retry
-		retryResult := retry.CheckRetry(callResult)
+		retryResult := retry.CheckRetry()
 		if !retryResult.DoRetry {
 			log.Warnf("RPC failed with error: %v", callResult.Error)
 			break

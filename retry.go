@@ -27,7 +27,7 @@ const (
 
 type retryPolicyInterface interface {
 	SetOptions(interface{})
-	CheckRetry(*RPCCallResult) *CheckRetryResult
+	CheckRetry() *CheckRetryResult
 	PollTimeout() time.Duration
 }
 
@@ -40,7 +40,7 @@ func getRetryPolicy(policy RetryPolicy, options ...interface{}) retryPolicyInter
 	case ExponentialBackoff:
 		rp = &exponentialBackoffRetryPolicy{
 			options: ExponentialBackoffOptions{
-				MaxTimeout:  defaultEBInitialTimeout,
+				MaxTimeout:  defaultEBMaxTimeout,
 				Exponent:    defaultEBExponent,
 				NextTimeout: defaultEBInitialTimeout,
 			},
@@ -65,7 +65,7 @@ type noRetryPolicy struct {
 
 func (rp *noRetryPolicy) SetOptions(interface{}) {}
 
-func (rp *noRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *noRetryPolicy) CheckRetry() *CheckRetryResult {
 	return &CheckRetryResult{DoRetry: false}
 }
 
@@ -94,12 +94,14 @@ func (rp *exponentialBackoffRetryPolicy) PollTimeout() time.Duration {
 	return rp.options.NextTimeout
 }
 
-func (rp *exponentialBackoffRetryPolicy) CheckRetry(callResult *RPCCallResult) *CheckRetryResult {
+func (rp *exponentialBackoffRetryPolicy) CheckRetry() *CheckRetryResult {
+	retry := CheckRetryResult{DoRetry: true, Timeout: rp.options.NextTimeout}
+
+	rp.options.NextTimeout = rp.options.NextTimeout * time.Duration(rp.options.Exponent)
+
 	if rp.options.NextTimeout > rp.options.MaxTimeout {
-		return &CheckRetryResult{DoRetry: false}
+		rp.options.NextTimeout = rp.options.MaxTimeout
 	}
 
-	res := &CheckRetryResult{DoRetry: true, Timeout: rp.options.NextTimeout}
-	rp.options.NextTimeout *= time.Duration(rp.options.Exponent)
-	return res
+	return &retry
 }
