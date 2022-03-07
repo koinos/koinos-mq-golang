@@ -245,8 +245,14 @@ func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcTy
 			return
 		}
 
-		// Make a child context with a small timeout, and call the RPC
-		callCtx, cancel := context.WithTimeout(ctx, rpcAttemptTimeout)
+		callCtx := ctx
+		cancel := func() {}
+
+		// If there is no deadline, we will retry until explicitly cancelled, otherwise we will wait for the timeout.
+		if _, ok := callCtx.Deadline(); !ok {
+			callCtx, cancel = context.WithTimeout(ctx, rpcAttemptTimeout)
+		}
+
 		defer cancel()
 		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
 		// If there were no errors, we are done
