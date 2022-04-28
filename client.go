@@ -102,42 +102,45 @@ func (client *Client) ConnectLoop() {
 
 			if err == nil {
 				consumers, replyTo, err := client.conn.CreateRPCReturnChannels(client.rpcReturnNumConsumers)
-				if err != nil {
-					goto Delay
-				}
+				if err == nil {
+					client.rpcReplyTo = replyTo
+					for _, consumer := range consumers {
+						go client.ConsumeRPCReturnLoop(consumer)
+					}
 
-				client.rpcReplyTo = replyTo
-				for _, consumer := range consumers {
-					go client.ConsumeRPCReturnLoop(consumer)
+					log.Infof("Client connected")
+					break
 				}
-
-				log.Infof("Client connected")
-				break
 			}
-		Delay:
+
 			delay := RetryMinDelay + RetryDelayPerRetry*retryCount
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
 			}
-			select {
 			/*
+				select {
+
+				   // TODO: Add quit channel for clean termination
+				   case <-client.quitChan:
+				      return
+				case <-time.After(time.Duration(delay) * time.Second):
+					retryCount++
+				}
+			*/
+			<-time.After(time.Duration(delay) * time.Second)
+			retryCount++
+		}
+		/*
+			select {
+
 			   // TODO: Add quit channel for clean termination
 			   case <-client.quitChan:
 			      return
-			*/
-			case <-time.After(time.Duration(delay) * time.Second):
-				retryCount++
+			case <-client.conn.NotifyClose:
 			}
-		}
-
-		select {
-		/*
-		   // TODO: Add quit channel for clean termination
-		   case <-client.quitChan:
-		      return
 		*/
-		case <-client.conn.NotifyClose:
-		}
+
+		<-client.conn.NotifyClose
 	}
 }
 

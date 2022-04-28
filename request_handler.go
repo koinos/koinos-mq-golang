@@ -141,25 +141,28 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
 			}
-			select {
 			/*
+				select {
+				   // TODO: Add quit channel for clean termination
+				   case <-requestHandler.quitChan:
+				      return
+					case <-time.After(time.Duration(delay) * time.Second):
+						retryCount++
+				}
+			*/
+			<-time.After(time.Duration(delay) * time.Second)
+			retryCount++
+		}
+
+		/*
+			select {
 			   // TODO: Add quit channel for clean termination
 			   case <-requestHandler.quitChan:
 			      return
-			*/
-			case <-time.After(time.Duration(delay) * time.Second):
-				retryCount++
+				case <-requestHandler.conn.NotifyClose:
 			}
-		}
-
-		select {
-		/*
-		   // TODO: Add quit channel for clean termination
-		   case <-requestHandler.quitChan:
-		      return
 		*/
-		case <-requestHandler.conn.NotifyClose:
-		}
+		<-requestHandler.conn.NotifyClose
 	}
 }
 
@@ -186,7 +189,7 @@ func (requestHandler *RequestHandler) ConsumeRPCLoop(consumer <-chan amqp.Delive
 			log.Errorf("Couldn't deliver message, error is %v", err)
 			// TODO: Should an error close the connection?
 		} else {
-			delivery.Ack(true)
+			_ = delivery.Ack(true)
 		}
 	}
 	log.Debug("Exit ConsumeRPCLoop")
