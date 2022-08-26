@@ -142,12 +142,6 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 	}
 }
 
-// newConnection creates a new Connection
-func (requestHandler *RequestHandler) newConnection() *connection {
-	conn := new(connection)
-	return conn
-}
-
 func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amqp.Delivery, rpcType string, RespChan *amqp.Channel) {
 	for {
 		select {
