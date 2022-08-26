@@ -5,15 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
-)
-
-const (
-	rpcAttemptTimeout = (1 * time.Second)
 )
 
 type ContentType string
@@ -60,8 +55,7 @@ type Client struct {
 	 */
 	rpcReturnNumConsumers int
 
-	rpcReturnMap   map[string]chan *RPCCallResult
-	rpcReturnMutex sync.Mutex
+	rpcReturnMap map[string]chan *RPCCallResult
 
 	rpcReplyTo     string
 	rpcRetryPolicy RetryPolicy
@@ -152,12 +146,6 @@ func (client *Client) connectLoop(ctx context.Context) {
 		case <-ctx.Done():
 		}
 	}
-}
-
-// newConnection creates a new Connection
-func (client *Client) newConnection() *connection {
-	conn := new(connection)
-	return conn
 }
 
 func randInt(min int, max int) int {
