@@ -20,6 +20,12 @@ const (
 	rpcQueuePrefix        = "koinos.rpc."
 )
 
+type rpcDelivery struct {
+	delivery    *amqp.Delivery
+	topic       string
+	isBroadcast bool
+}
+
 // RequestHandler AMPQ Golang Wrapper
 //
 // - Each RPC message has an rpcType
@@ -32,69 +38,44 @@ type RequestHandler struct {
 	 */
 	Address string
 
-	/**
-	 * Handlers for RPC.  Indexed by rpcType.
-	 */
-	rpcHandlerMap map[string]RPCHandlerFunc
-
-	/**
-	 * Handlers for broadcast.  Indexed by topic.
-	 */
+	rpcHandlerMap       map[string]RPCHandlerFunc
 	broadcastHandlerMap map[string]BroadcastHandlerFunc
 
-	/**
-	 * Number of RPC consumers
-	 */
-	rpcNumConsumers int
+	numConsumers uint
 
-	/**
-	 * Number of broadcast consumers
-	 */
-	broadcastNumConsumers int
+	deliveryChan chan *rpcDelivery
 
 	conn *connection
 }
 
 // NewRequestHandler factory method.
-func NewRequestHandler(addr string) *RequestHandler {
-	requestHandler := new(RequestHandler)
-	requestHandler.Address = addr
-
-	requestHandler.rpcHandlerMap = make(map[string]RPCHandlerFunc)
-	requestHandler.broadcastHandlerMap = make(map[string]BroadcastHandlerFunc)
-
-	requestHandler.rpcNumConsumers = 1
-	requestHandler.broadcastNumConsumers = 1
-
-	return requestHandler
+func NewRequestHandler(addr string, consumers uint) *RequestHandler {
+	return &RequestHandler{
+		Address:             addr,
+		rpcHandlerMap:       make(map[string]RPCHandlerFunc),
+		broadcastHandlerMap: make(map[string]BroadcastHandlerFunc),
+		numConsumers:        consumers,
+		deliveryChan:        make(chan *rpcDelivery, consumers),
+		conn:                &connection{},
+	}
 }
 
 // Start begins the connection loop.
-func (requestHandler *RequestHandler) Start() {
-	go requestHandler.ConnectLoop()
+func (r *RequestHandler) Start(ctx context.Context) {
+	go r.connectLoop(ctx)
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.
-func (requestHandler *RequestHandler) SetRPCHandler(rpcType string, handler RPCHandlerFunc) {
-	requestHandler.rpcHandlerMap[rpcType] = handler
+func (r *RequestHandler) SetRPCHandler(rpcType string, handler RPCHandlerFunc) {
+	r.rpcHandlerMap[rpcType] = handler
 }
 
 // SetBroadcastHandler sets the broadcast handler for a type.
-func (requestHandler *RequestHandler) SetBroadcastHandler(topic string, handler BroadcastHandlerFunc) {
-	requestHandler.broadcastHandlerMap[topic] = handler
+func (r *RequestHandler) SetBroadcastHandler(topic string, handler BroadcastHandlerFunc) {
+	r.broadcastHandlerMap[topic] = handler
 }
 
-// SetNumConsumers sets the number of consumers for queues.
-//
-// This sets the number of parallel goroutines that consume the respective AMQP queues.
-// Must be called before Connect().
-func (requestHandler *RequestHandler) SetNumConsumers(rpcNumConsumers int, broadcastNumConsumers int, rpcReturnNumConsumers int) {
-	requestHandler.rpcNumConsumers = rpcNumConsumers
-	requestHandler.broadcastNumConsumers = broadcastNumConsumers
-}
-
-// ConnectLoop is the main entry point.
-func (requestHandler *RequestHandler) ConnectLoop() {
+func (r *RequestHandler) connectLoop(ctx context.Context) {
 	const (
 		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
@@ -104,33 +85,32 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 
 	for {
 		retryCount := 0
-		log.Infof("Connecting request handler to AMQP server %v", requestHandler.Address)
+		log.Infof("Connecting request handler to AMQP server %v", r.Address)
 
 		for {
-			requestHandler.conn = requestHandler.newConnection()
-			ctx, cancel := context.WithTimeout(context.Background(), ConnectionTimeout*time.Second)
-			defer cancel()
-			err := requestHandler.conn.Open(ctx, requestHandler.Address)
+			connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
+			defer connectCancel()
+			err := r.conn.Open(connectCtx, r.Address)
 
 			if err == nil {
 				// Start handler consumption
-				for rpcType := range requestHandler.rpcHandlerMap {
-					consumers, err := requestHandler.conn.CreateRPCChannels(rpcType, requestHandler.rpcNumConsumers)
+				for rpcType := range r.rpcHandlerMap {
+					consumers, err := r.conn.CreateRPCChannels(rpcType, 1)
 					if err != nil {
 						goto Delay
 					}
 					for _, consumer := range consumers {
-						go requestHandler.ConsumeRPCLoop(consumer, rpcType, requestHandler.conn.AmqpChan)
+						go r.consumeRPCLoop(ctx, consumer, rpcType, r.conn.AmqpChan)
 					}
 				}
 
-				for topic := range requestHandler.broadcastHandlerMap {
-					consumers, err := requestHandler.conn.CreateBroadcastChannels(topic, requestHandler.broadcastNumConsumers)
+				for topic := range r.broadcastHandlerMap {
+					consumers, err := r.conn.CreateBroadcastChannels(topic, 1)
 					if err != nil {
 						goto Delay
 					}
 					for _, consumer := range consumers {
-						go requestHandler.ConsumeBroadcastLoop(consumer, topic)
+						go r.consumeBroadcastLoop(ctx, consumer, topic)
 					}
 				}
 				log.Infof("Request handler connected")
@@ -141,28 +121,24 @@ func (requestHandler *RequestHandler) ConnectLoop() {
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
 			}
-			/*
-				select {
-				   // TODO: Add quit channel for clean termination
-				   case <-requestHandler.quitChan:
-				      return
-					case <-time.After(time.Duration(delay) * time.Second):
-						retryCount++
-				}
-			*/
-			<-time.After(time.Duration(delay) * time.Second)
-			retryCount++
+
+			select {
+			case <-time.After(time.Duration(delay) * time.Second):
+				retryCount++
+			case <-ctx.Done():
+				return
+			}
 		}
 
-		/*
-			select {
-			   // TODO: Add quit channel for clean termination
-			   case <-requestHandler.quitChan:
-			      return
-				case <-requestHandler.conn.NotifyClose:
-			}
-		*/
-		<-requestHandler.conn.NotifyClose
+		for i := 0; i < int(r.numConsumers); i++ {
+			go r.deliveryConsumerLoop(ctx)
+		}
+
+		select {
+		case <-r.conn.NotifyClose:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -172,63 +148,95 @@ func (requestHandler *RequestHandler) newConnection() *connection {
 	return conn
 }
 
-// ConsumeRPCLoop consumption loop for RPC. Normally, the caller would run this function in a goroutine.
-func (requestHandler *RequestHandler) ConsumeRPCLoop(consumer <-chan amqp.Delivery, rpcType string, RespChan *amqp.Channel) {
-	log.Debug("Enter ConsumeRPCLoop")
-	for delivery := range consumer {
-		outputPub := requestHandler.HandleRPCDelivery(rpcType, &delivery)
+func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amqp.Delivery, rpcType string, RespChan *amqp.Channel) {
+	for {
+		select {
+		case delivery := <-consumer:
+			r.deliveryChan <- &rpcDelivery{
+				delivery:    &delivery,
+				isBroadcast: false,
+				topic:       rpcType,
+			}
 
-		err := RespChan.Publish(
-			rpcExchangeName,  // Exchange
-			delivery.ReplyTo, // Routing key (channel name for default exchange)
-			false,            // Mandatory
-			false,            // Immediate
-			*outputPub,       // Message
-		)
-		if err != nil {
-			log.Errorf("Couldn't deliver message, error is %v", err)
-			// TODO: Should an error close the connection?
-		} else {
-			_ = delivery.Ack(true)
+		case <-ctx.Done():
+			return
 		}
 	}
-	log.Debug("Exit ConsumeRPCLoop")
 }
 
-// ConsumeBroadcastLoop consumption loop for broadcast. Normally, the caller would run this function in a goroutine.
-func (requestHandler *RequestHandler) ConsumeBroadcastLoop(consumer <-chan amqp.Delivery, topic string) {
-	log.Debug("Enter ConsumeBroadcastLoop")
-	for delivery := range consumer {
-		requestHandler.HandleBroadcastDelivery(topic, &delivery)
+func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-chan amqp.Delivery, topic string) {
+	for {
+		select {
+		case delivery := <-consumer:
+			r.deliveryChan <- &rpcDelivery{
+				delivery:    &delivery,
+				isBroadcast: false,
+				topic:       topic,
+			}
+
+		case <-ctx.Done():
+			return
+		}
 	}
-	log.Debug("Exit ConsumeBroadcastLoop")
 }
 
-// HandleRPCDelivery handles a single RPC delivery.
-//
-// Parses request Delivery using ContentTypeHandler, dispath to Handler function,
-// serialize response Publishing using ContentTypeHandler.
-func (requestHandler *RequestHandler) HandleRPCDelivery(rpcType string, delivery *amqp.Delivery) *amqp.Publishing {
+func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delivery) {
 	// TODO:  Proper RPC error handling
+	var err error
+	var output []byte
 
-	handler := requestHandler.rpcHandlerMap[rpcType]
-	output, err := handler(rpcType, delivery.Body)
+	if handler, ok := r.rpcHandlerMap[rpcType]; ok {
+		output, err = handler(rpcType, delivery.Body)
+	} else {
+		log.Error("Could not find handler for RPC")
+		return
+	}
+
 	if err != nil {
 		log.Error("Error in RPC handler")
-		return nil
+		return
 	}
-	outputPub := amqp.Publishing{
-		DeliveryMode:  amqp.Transient,
-		Timestamp:     time.Now(),
-		ContentType:   delivery.ContentType,
-		CorrelationId: delivery.CorrelationId,
-		Body:          output,
+
+	err = r.conn.AmqpChan.Publish(
+		rpcExchangeName,  // Exchange
+		delivery.ReplyTo, // Routing key (channel name for default exchange)
+		false,            // Mandatory
+		false,            // Immediate
+		amqp.Publishing{
+			DeliveryMode:  amqp.Transient,
+			Timestamp:     time.Now(),
+			ContentType:   delivery.ContentType,
+			CorrelationId: delivery.CorrelationId,
+			Body:          output,
+		},
+	)
+
+	if err != nil {
+		log.Errorf("Couldn't deliver message, error is %v", err)
+		// TODO: Should an error close the connection?
+	} else {
+		_ = delivery.Ack(true)
 	}
-	return &outputPub
 }
 
-// HandleBroadcastDelivery handles a single broadcast delivery.
-func (requestHandler *RequestHandler) HandleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
-	handler := requestHandler.broadcastHandlerMap[topic]
-	handler(delivery.RoutingKey, delivery.Body)
+func (r *RequestHandler) handleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
+	if handler, ok := r.broadcastHandlerMap[topic]; ok {
+		handler(delivery.RoutingKey, delivery.Body)
+	}
+}
+
+func (r *RequestHandler) deliveryConsumerLoop(ctx context.Context) {
+	for {
+		select {
+		case d := <-r.deliveryChan:
+			if d.isBroadcast {
+				r.handleBroadcastDelivery(d.topic, d.delivery)
+			} else {
+				r.handleRPCDelivery(d.topic, d.delivery)
+			}
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }
