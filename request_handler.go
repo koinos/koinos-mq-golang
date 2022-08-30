@@ -182,12 +182,12 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 	if handler, ok := r.rpcHandlerMap[rpcType]; ok {
 		output, err = handler(rpcType, delivery.Body)
 	} else {
-		log.Error("Could not find handler for RPC")
+		log.Errorf("Could not find handler for RPC '%v'\n", rpcType)
 		return
 	}
 
 	if err != nil {
-		log.Error("Error in RPC handler")
+		log.Errorf("Error in RPC handler, %v", err.Error())
 		return
 	}
 
@@ -206,7 +206,7 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 	)
 
 	if err != nil {
-		log.Errorf("Couldn't deliver message, error is %v", err)
+		log.Errorf("Couldn't deliver message, %v", err.Error())
 		// TODO: Should an error close the connection?
 	} else {
 		_ = delivery.Ack(true)
@@ -216,6 +216,9 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 func (r *RequestHandler) handleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
 	if handler, ok := r.broadcastHandlerMap[topic]; ok {
 		handler(delivery.RoutingKey, delivery.Body)
+	} else {
+		log.Errorf("Could not find handler for Broadcast '%v'\n", topic)
+		return
 	}
 }
 
