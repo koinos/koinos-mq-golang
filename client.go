@@ -111,6 +111,7 @@ func (client *Client) connectLoop(ctx context.Context) {
 		log.Infof("Connecting client to AMQP server %v", client.Address)
 
 		for {
+			client.conn = &connection{}
 			conectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
 			defer connectCancel()
 			err := client.conn.Open(conectCtx, client.Address)
@@ -143,7 +144,6 @@ func (client *Client) connectLoop(ctx context.Context) {
 
 		select {
 		case <-client.conn.NotifyClose:
-			client.conn = &connection{}
 			continue
 		case <-ctx.Done():
 			return

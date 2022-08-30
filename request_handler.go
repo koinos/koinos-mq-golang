@@ -83,11 +83,16 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 		RetryDelayPerRetry = 2
 	)
 
+	for i := 0; i < int(r.numConsumers); i++ {
+		go r.deliveryConsumerLoop(ctx)
+	}
+
 	for {
 		retryCount := 0
 		log.Infof("Connecting request handler to AMQP server %v", r.Address)
 
 		for {
+			r.conn = &connection{}
 			connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
 			defer connectCancel()
 			err := r.conn.Open(connectCtx, r.Address)
@@ -130,13 +135,8 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 			}
 		}
 
-		for i := 0; i < int(r.numConsumers); i++ {
-			go r.deliveryConsumerLoop(ctx)
-		}
-
 		select {
 		case <-r.conn.NotifyClose:
-			r.conn = &connection{}
 			continue
 		case <-ctx.Done():
 			return
