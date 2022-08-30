@@ -145,7 +145,11 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amqp.Delivery, rpcType string, RespChan *amqp.Channel) {
 	for {
 		select {
-		case delivery := <-consumer:
+		case delivery, ok := <-consumer:
+			if !ok {
+				return
+			}
+
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
 				isBroadcast: false,
@@ -161,7 +165,11 @@ func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amq
 func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-chan amqp.Delivery, topic string) {
 	for {
 		select {
-		case delivery := <-consumer:
+		case delivery, ok := <-consumer:
+			if !ok {
+				return
+			}
+
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
 				isBroadcast: true,
