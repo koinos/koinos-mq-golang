@@ -104,6 +104,8 @@ func (client *Client) connectLoop(ctx context.Context) {
 		RetryDelayPerRetry = 2
 	)
 
+	go client.connectionLoop(ctx)
+
 	for {
 		retryCount := 0
 		log.Infof("Connecting client to AMQP server %v", client.Address)
@@ -120,8 +122,6 @@ func (client *Client) connectLoop(ctx context.Context) {
 					for _, consumer := range consumers {
 						go client.consumeRPCReturnLoop(ctx, consumer)
 					}
-
-					go client.connectionLoop(ctx)
 
 					log.Infof("Client connected")
 					break
