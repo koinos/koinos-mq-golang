@@ -136,6 +136,8 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 
 		select {
 		case <-r.conn.NotifyClose:
+			r.conn = &connection{}
+			continue
 		case <-ctx.Done():
 			return
 		}

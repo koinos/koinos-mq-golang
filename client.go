@@ -143,7 +143,10 @@ func (client *Client) connectLoop(ctx context.Context) {
 
 		select {
 		case <-client.conn.NotifyClose:
+			client.conn = &connection{}
+			continue
 		case <-ctx.Done():
+			return
 		}
 	}
 }
