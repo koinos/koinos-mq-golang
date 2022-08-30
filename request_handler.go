@@ -164,7 +164,7 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 		case delivery := <-consumer:
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
-				isBroadcast: false,
+				isBroadcast: true,
 				topic:       topic,
 			}
 
