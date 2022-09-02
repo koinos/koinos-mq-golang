@@ -218,8 +218,6 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 	if err != nil {
 		log.Errorf("Couldn't deliver message, %v", err.Error())
 		// TODO: Should an error close the connection?
-	} else {
-		_ = delivery.Ack(true)
 	}
 }
 

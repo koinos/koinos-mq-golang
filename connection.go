@@ -170,7 +170,7 @@ func (c *connection) CreateRPCChannels(rpcType string, numConsumers int) ([]<-ch
 		result[i], err = c.AmqpChan.Consume(
 			rpcQueueName, // Queue
 			"",           // Consumer
-			false,        // AutoAck
+			true,         // AutoAck
 			false,        // Exclusive
 			false,        // NoLocal
 			false,        // NoWait
