@@ -5,15 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
 	"github.com/streadway/amqp"
 )
 
+type ContentType string
+
 const (
-	rpcAttemptTimeout = (1 * time.Second)
+	OctetStream = "application/octet-stream"
 )
 
 // RPCCallResult is the result of an rpc call
@@ -22,9 +23,24 @@ type RPCCallResult struct {
 	Error  error
 }
 
+type rpcRequest struct {
+	resultChan  chan *RPCCallResult
+	id          string
+	contentType ContentType
+	rpcService  string
+	args        []byte
+	expiration  string
+}
+
+type rpcResult struct {
+	id   string
+	data []byte
+	err  error
+}
+
 // Client AMPQ Golang Wrapper
 //
-// - Each RPC message has an rpcType
+// - Each RPC message has an rpcService
 // - Queue for RPC of type T is kept in queue named `koins_rpc_T`
 // - RPC messages per node type
 // - Single global exchange for events, all node types
@@ -39,38 +55,37 @@ type Client struct {
 	 */
 	rpcReturnNumConsumers int
 
-	rpcReturnMap   map[string]chan rpcReturnType
-	rpcReturnMutex sync.Mutex
+	rpcReturnMap map[string]chan *RPCCallResult
 
-	rpcReplyTo string
-
+	rpcReplyTo     string
 	rpcRetryPolicy RetryPolicy
+
+	requestChan    chan *rpcRequest
+	resultChan     chan *rpcResult
+	expirationChan chan string
 
 	conn *connection
 }
 
-type rpcReturnType struct {
-	data []byte
-	err  error
-}
-
-const ()
-
 // NewClient factory method.
 func NewClient(addr string, rpcRetryPolicy RetryPolicy) *Client {
-	client := new(Client)
-	client.Address = addr
-
-	client.rpcRetryPolicy = rpcRetryPolicy
-
-	client.rpcReturnNumConsumers = 1
+	client := &Client{
+		Address:               addr,
+		rpcRetryPolicy:        rpcRetryPolicy,
+		rpcReturnNumConsumers: 1,
+		rpcReturnMap:          make(map[string]chan *RPCCallResult),
+		requestChan:           make(chan *rpcRequest, 10),
+		resultChan:            make(chan *rpcResult, 10),
+		expirationChan:        make(chan string, 10),
+		conn:                  &connection{},
+	}
 
 	return client
 }
 
 // Start begins the connection loop.
-func (client *Client) Start() {
-	go client.ConnectLoop()
+func (client *Client) Start(ctx context.Context) {
+	go client.connectLoop(ctx)
 }
 
 // SetNumConsumers sets the number of consumers for queues.
@@ -81,8 +96,7 @@ func (client *Client) SetNumConsumers(rpcReturnNumConsumers int) {
 	client.rpcReturnNumConsumers = rpcReturnNumConsumers
 }
 
-// ConnectLoop is the main entry point.
-func (client *Client) ConnectLoop() {
+func (client *Client) connectLoop(ctx context.Context) {
 	const (
 		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
@@ -90,22 +104,24 @@ func (client *Client) ConnectLoop() {
 		RetryDelayPerRetry = 2
 	)
 
+	go client.connectionLoop(ctx)
+
 	for {
 		retryCount := 0
 		log.Infof("Connecting client to AMQP server %v", client.Address)
 
 		for {
-			client.conn = client.newConnection()
-			ctx, cancel := context.WithTimeout(context.Background(), ConnectionTimeout*time.Second)
-			defer cancel()
-			err := client.conn.Open(ctx, client.Address)
+			client.conn = &connection{}
+			conectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
+			defer connectCancel()
+			err := client.conn.Open(conectCtx, client.Address)
 
 			if err == nil {
 				consumers, replyTo, err := client.conn.CreateRPCReturnChannels(client.rpcReturnNumConsumers)
 				if err == nil {
 					client.rpcReplyTo = replyTo
 					for _, consumer := range consumers {
-						go client.ConsumeRPCReturnLoop(consumer)
+						go client.consumeRPCReturnLoop(ctx, consumer)
 					}
 
 					log.Infof("Client connected")
@@ -117,38 +133,22 @@ func (client *Client) ConnectLoop() {
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
 			}
-			/*
-				select {
 
-				   // TODO: Add quit channel for clean termination
-				   case <-client.quitChan:
-				      return
-				case <-time.After(time.Duration(delay) * time.Second):
-					retryCount++
-				}
-			*/
-			<-time.After(time.Duration(delay) * time.Second)
-			retryCount++
-		}
-		/*
 			select {
-
-			   // TODO: Add quit channel for clean termination
-			   case <-client.quitChan:
-			      return
-			case <-client.conn.NotifyClose:
+			case <-time.After(time.Duration(delay) * time.Second):
+				retryCount++
+			case <-ctx.Done():
+				return
 			}
-		*/
+		}
 
-		<-client.conn.NotifyClose
+		select {
+		case <-client.conn.NotifyClose:
+			continue
+		case <-ctx.Done():
+			return
+		}
 	}
-}
-
-// newConnection creates a new Connection
-func (client *Client) newConnection() *connection {
-	conn := new(connection)
-	client.rpcReturnMap = make(map[string]chan rpcReturnType)
-	return conn
 }
 
 func randInt(min int, max int) int {
@@ -164,14 +164,14 @@ func randomString(l int) string {
 }
 
 // Broadcast a message via AMQP
-func (client *Client) Broadcast(contentType string, topic string, args []byte) error {
+func (client *Client) Broadcast(contentType ContentType, topic string, args []byte) error {
 	err := client.conn.AmqpChan.Publish(
 		broadcastExchangeName,
 		topic,
 		false,
 		false,
 		amqp.Publishing{
-			ContentType: contentType,
+			ContentType: string(contentType),
 			Body:        args,
 		},
 	)
@@ -179,159 +179,152 @@ func (client *Client) Broadcast(contentType string, topic string, args []byte) e
 	return err
 }
 
-func (client *Client) tryRPC(ctx context.Context, contentType string, rpcType string, expiration string, args []byte) *RPCCallResult {
-	callResult := RPCCallResult{
-		Result: nil,
-		Error:  nil,
-	}
+func (c *Client) tryRPC(ctx context.Context, contentType ContentType, rpcService string, expiration string, args []byte) ([]byte, error) {
 
-	conn := client.conn
-
-	if (conn == nil) || !conn.IsOpen() {
-		callResult.Error = errors.New("AMQP connection is not open")
-		return &callResult
+	if (c.conn == nil) || !c.conn.IsOpen() {
+		return nil, errors.New("AMQP connection is not open")
 	}
 
 	corrID := randomString(32)
-	returnChan := make(chan rpcReturnType, 1)
+	resultChan := make(chan *RPCCallResult, 1)
 
-	client.rpcReturnMutex.Lock()
-	client.rpcReturnMap[corrID] = returnChan
-	client.rpcReturnMutex.Unlock()
-
-	callResult.Error = conn.AmqpChan.Publish(
-		rpcExchangeName,
-		rpcQueuePrefix+rpcType,
-		false,
-		false,
-		amqp.Publishing{
-			ContentType:   contentType,
-			CorrelationId: corrID,
-			ReplyTo:       client.rpcReplyTo,
-			Body:          args,
-			Expiration:    expiration,
-		},
-	)
-
-	if callResult.Error == nil {
-		// Wait on channel to get result bytes or context to timeout
-		select {
-		case rpcResult := <-returnChan:
-			if rpcResult.err != nil {
-				callResult.Error = rpcResult.err
-			} else {
-				callResult.Result = rpcResult.data
-			}
-		case <-ctx.Done():
-			callResult.Error = ctx.Err()
-		}
-	}
-
-	client.rpcReturnMutex.Lock()
-	delete(client.rpcReturnMap, corrID)
-	client.rpcReturnMutex.Unlock()
-
-	return &callResult
-}
-
-func (client *Client) makeRPCCall(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
-	var callResult *RPCCallResult
-
-	// Ask the retry factory for a new policy instance
-	retry := getRetryPolicy(client.rpcRetryPolicy)
-	timeout := retry.PollTimeout()
-
-	for {
-		// If the context has been cancelled, quit without a result
-		cancelled := ctx.Err()
-		if cancelled != nil {
-			return
-		}
-
-		callCtx := ctx
-		cancel := func() {}
-
-		// If there is no deadline, we will retry until explicitly cancelled, otherwise we will wait for the timeout.
-		if _, ok := callCtx.Deadline(); !ok {
-			callCtx, cancel = context.WithTimeout(ctx, rpcAttemptTimeout)
-		}
-
-		defer cancel()
-		callResult = client.tryRPC(callCtx, contentType, rpcType, DurationToUnitString(timeout, time.Millisecond), args)
-		// If there were no errors, we are done
-		if callResult.Error == nil {
-			break
-		}
-
-		// See if the policy requests a retry
-		retryResult := retry.CheckRetry()
-		if !retryResult.DoRetry {
-			log.Warnf("RPC failed with error: %v", callResult.Error)
-			break
-		}
-
-		// Sleep for the required amount of time
-		log.Warnf("RPC error: %v", callResult.Error)
-		log.Warnf("Trying again in %d seconds", int(retryResult.Timeout/time.Second))
-		timeout = retryResult.Timeout
-		time.Sleep(timeout)
-	}
-
-	done <- callResult
-}
-
-// RPCContext makes a block RPC call with timeout of the given context
-func (client *Client) RPCContext(ctx context.Context, contentType string, rpcType string, args []byte) ([]byte, error) {
-	done := make(chan *RPCCallResult)
-	go client.makeRPCCall(ctx, contentType, rpcType, args, done)
 	select {
-	case result := <-done:
-		return result.Result, result.Error
+	case c.requestChan <- &rpcRequest{
+		resultChan:  resultChan,
+		id:          corrID,
+		contentType: contentType,
+		rpcService:  rpcService,
+		args:        args,
+		expiration:  expiration,
+	}:
+	case <-ctx.Done():
+		go func() {
+			c.expirationChan <- corrID
+		}()
+		return nil, ctx.Err()
+	}
+
+	select {
+	case res := <-resultChan:
+		return res.Result, res.Error
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-// RPC makes a blocking RPC call with no timeout
-func (client *Client) RPC(contentType string, rpcType string, args []byte) ([]byte, error) {
-	return client.RPCContext(context.Background(), contentType, rpcType, args)
-}
+// RPC makes an RPC call
+func (client *Client) RPC(ctx context.Context, contentType ContentType, rpcService string, args []byte) ([]byte, error) {
+	// Ask the retry factory for a new policy instance
+	retry := getRetryPolicy(client.rpcRetryPolicy)
 
-// GoRPCContext asynchronously makes an RPC call with timeout of the given context
-func (client *Client) GoRPCContext(ctx context.Context, contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
-	go client.makeRPCCall(ctx, contentType, rpcType, args, done)
-}
-
-// GoRPC asynchronously makes an RPC call with no timeout
-func (client *Client) GoRPC(contentType string, rpcType string, args []byte, done chan *RPCCallResult) {
-	client.GoRPCContext(context.Background(), contentType, rpcType, args, done)
-}
-
-// ConsumeRPCReturnLoop consumption loop for RPC Return. Normally, the caller would run this function in a goroutine.
-func (client *Client) ConsumeRPCReturnLoop(consumer <-chan amqp.Delivery) {
-	log.Debug("Enter ConsumeRPCReturnLoop")
-	for delivery := range consumer {
-		var result rpcReturnType
-		result.data = delivery.Body
-		var returnChan chan rpcReturnType
-		hasReturnChan := false
-
-		client.rpcReturnMutex.Lock()
-		if val, ok := client.rpcReturnMap[delivery.CorrelationId]; ok {
-			returnChan = val
-			hasReturnChan = true
-			delete(client.rpcReturnMap, delivery.CorrelationId)
+	for {
+		// If the context has been cancelled, quit without a result
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
-		client.rpcReturnMutex.Unlock()
 
-		if hasReturnChan {
-			returnChan <- result
+		rpcCtx, rpcCancel := context.WithTimeout(ctx, retry.PollTimeout())
+		defer rpcCancel()
+
+		result, err := client.tryRPC(rpcCtx, contentType, rpcService, durationToUnitString(retry.PollTimeout(), time.Millisecond), args)
+		// If there were no errors, we are done
+		if err == nil {
+			return result, err
+		}
+
+		// See if the policy requests a retry
+		retryResult := retry.CheckRetry()
+		if !retryResult.DoRetry {
+			//log.Warnf("RPC failed with error: %v", callResult.Error)
+			break
+		}
+
+		// Sleep for the required amount of time
+		select {
+		case <-time.After(retryResult.Timeout):
+		case <-ctx.Done():
 		}
 	}
-	log.Debug("Exit ConsumeRPCReturnLoop\n")
+
+	return nil, errors.New("rpc failed")
 }
 
-// DurationToUnitString converts the given duration to an integer string in the given unit
-func DurationToUnitString(duration time.Duration, unit time.Duration) string {
+func (c *Client) consumeRPCReturnLoop(ctx context.Context, consumer <-chan amqp.Delivery) {
+	for delivery := range consumer {
+		select {
+		case c.resultChan <- &rpcResult{
+			id:   delivery.CorrelationId,
+			data: delivery.Body,
+		}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (c *Client) handleRequest(req *rpcRequest) {
+	c.rpcReturnMap[req.id] = req.resultChan
+
+	err := c.conn.AmqpChan.Publish(
+		rpcExchangeName,
+		rpcQueuePrefix+req.rpcService,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType:   string(req.contentType),
+			CorrelationId: req.id,
+			ReplyTo:       c.rpcReplyTo,
+			Body:          req.args,
+			Expiration:    req.expiration,
+		},
+	)
+
+	if err != nil {
+		delete(c.rpcReturnMap, req.id)
+		req.resultChan <- &RPCCallResult{
+			Error: err,
+		}
+		close(req.resultChan)
+	}
+}
+
+func (c *Client) handleResult(res *rpcResult) {
+	if resChan, ok := c.rpcReturnMap[res.id]; ok {
+		delete(c.rpcReturnMap, res.id)
+		resChan <- &RPCCallResult{
+			Result: res.data,
+			Error:  res.err,
+		}
+		close(resChan)
+	}
+}
+
+func (c *Client) handleExpiration(id string) {
+	if resChan, ok := c.rpcReturnMap[id]; ok {
+		delete(c.rpcReturnMap, id)
+		resChan <- &RPCCallResult{
+			Error: errors.New("rpc call timeout"),
+		}
+		close(resChan)
+	}
+}
+
+func (c *Client) connectionLoop(ctx context.Context) {
+	for {
+		select {
+		case req := <-c.requestChan:
+			c.handleRequest(req)
+		case res := <-c.resultChan:
+			c.handleResult(res)
+		case id := <-c.expirationChan:
+			c.handleExpiration(id)
+
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func durationToUnitString(duration time.Duration, unit time.Duration) string {
 	return fmt.Sprint(int(duration / unit))
 }
