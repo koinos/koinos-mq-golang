@@ -61,14 +61,11 @@ func NewRequestHandler(addr string, consumers uint) *RequestHandler {
 }
 
 // Start begins the connection loop.
-func (r *RequestHandler) Start(ctx context.Context) {
+func (r *RequestHandler) Start(ctx context.Context) <-chan struct{} {
 	connectedChan := make(chan struct{}, 1)
 	go r.connectLoop(ctx, connectedChan)
 
-	select {
-	case <-connectedChan:
-	case <-ctx.Done():
-	}
+	return connectedChan
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.

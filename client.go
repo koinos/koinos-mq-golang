@@ -84,14 +84,11 @@ func NewClient(addr string, rpcRetryPolicy RetryPolicy) *Client {
 }
 
 // Start begins the connection loop. Blocks until first connected to AMQP
-func (client *Client) Start(ctx context.Context) {
+func (client *Client) Start(ctx context.Context) <-chan struct{} {
 	connectedChan := make(chan struct{}, 1)
 	go client.connectLoop(ctx, connectedChan)
 
-	select {
-	case <-connectedChan:
-	case <-ctx.Done():
-	}
+	return connectedChan
 }
 
 // SetNumConsumers sets the number of consumers for queues.
