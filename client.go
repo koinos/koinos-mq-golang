@@ -38,6 +38,8 @@ type rpcResult struct {
 	err  error
 }
 
+type void struct{}
+
 // Client AMPQ Golang Wrapper
 //
 // - Each RPC message has an rpcService
@@ -83,9 +85,15 @@ func NewClient(addr string, rpcRetryPolicy RetryPolicy) *Client {
 	return client
 }
 
-// Start begins the connection loop.
+// Start begins the connection loop. Blocks until first connected to AMQP
 func (client *Client) Start(ctx context.Context) {
-	go client.connectLoop(ctx)
+	connectedChan := make(chan void, 1)
+	go client.connectLoop(ctx, connectedChan)
+
+	select {
+	case <-connectedChan:
+	case <-ctx.Done():
+	}
 }
 
 // SetNumConsumers sets the number of consumers for queues.
@@ -96,7 +104,7 @@ func (client *Client) SetNumConsumers(rpcReturnNumConsumers int) {
 	client.rpcReturnNumConsumers = rpcReturnNumConsumers
 }
 
-func (client *Client) connectLoop(ctx context.Context) {
+func (client *Client) connectLoop(ctx context.Context, connectedChan chan<- void) {
 	const (
 		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
@@ -125,6 +133,8 @@ func (client *Client) connectLoop(ctx context.Context) {
 					}
 
 					log.Infof("Client connected")
+					connectedChan<- void{}
+					close(connectedChan)
 					break
 				}
 			}

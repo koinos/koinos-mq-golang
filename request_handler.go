@@ -62,7 +62,13 @@ func NewRequestHandler(addr string, consumers uint) *RequestHandler {
 
 // Start begins the connection loop.
 func (r *RequestHandler) Start(ctx context.Context) {
-	go r.connectLoop(ctx)
+	connectedChan := make(chan void, 1)
+	go r.connectLoop(ctx, connectedChan)
+
+	select {
+	case <-connectedChan:
+	case <-ctx.Done():
+	}
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.
@@ -75,7 +81,7 @@ func (r *RequestHandler) SetBroadcastHandler(topic string, handler BroadcastHand
 	r.broadcastHandlerMap[topic] = handler
 }
 
-func (r *RequestHandler) connectLoop(ctx context.Context) {
+func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- void) {
 	const (
 		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
@@ -119,6 +125,8 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 					}
 				}
 				log.Infof("Request handler connected")
+				connectedChan <- void{}
+				close(connectedChan)
 				break
 			}
 		Delay:
