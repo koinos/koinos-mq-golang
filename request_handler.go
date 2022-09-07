@@ -61,8 +61,11 @@ func NewRequestHandler(addr string, consumers uint) *RequestHandler {
 }
 
 // Start begins the connection loop.
-func (r *RequestHandler) Start(ctx context.Context) {
-	go r.connectLoop(ctx)
+func (r *RequestHandler) Start(ctx context.Context) <-chan struct{} {
+	connectedChan := make(chan struct{}, 1)
+	go r.connectLoop(ctx, connectedChan)
+
+	return connectedChan
 }
 
 // SetRPCHandler sets the RPC handler for an RPC type.
@@ -75,7 +78,7 @@ func (r *RequestHandler) SetBroadcastHandler(topic string, handler BroadcastHand
 	r.broadcastHandlerMap[topic] = handler
 }
 
-func (r *RequestHandler) connectLoop(ctx context.Context) {
+func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- struct{}) {
 	const (
 		ConnectionTimeout  = 1
 		RetryMinDelay      = 1
@@ -119,6 +122,13 @@ func (r *RequestHandler) connectLoop(ctx context.Context) {
 					}
 				}
 				log.Infof("Request handler connected")
+
+				if connectedChan != nil {
+					connectedChan <- struct{}{}
+					close(connectedChan)
+					connectedChan = nil
+				}
+
 				break
 			}
 		Delay:
@@ -152,6 +162,8 @@ func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amq
 				return
 			}
 
+			log.Debugf("Request handler received message: %v", delivery)
+
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
 				isBroadcast: false,
@@ -171,6 +183,8 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 			if !ok {
 				return
 			}
+
+			log.Debugf("Request handler received message: %v", delivery)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
