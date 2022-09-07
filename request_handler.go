@@ -160,6 +160,8 @@ func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amq
 				return
 			}
 
+			log.Debugf("Request handler received message: %v", delivery)
+
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
 				isBroadcast: false,
@@ -179,6 +181,8 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 			if !ok {
 				return
 			}
+
+			log.Debugf("Request handler received message: %v", delivery)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
