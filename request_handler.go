@@ -164,7 +164,7 @@ func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amq
 			}
 
 			log.Debugf("Request handler received message: %v", delivery)
-			fmt.Printf("Request handler received message: %v", delivery)
+			fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
@@ -187,7 +187,7 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 			}
 
 			log.Debugf("Request handler received message: %v", delivery)
-			fmt.Printf("Request handler received message: %v", delivery)
+			fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
@@ -218,7 +218,7 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 		return
 	}
 
-	fmt.Printf("Replying to message: %v", delivery)
+	fmt.Printf("Replying to message: %v", delivery.CorrelationId)
 
 	err = r.conn.AmqpChan.Publish(
 		rpcExchangeName,  // Exchange
