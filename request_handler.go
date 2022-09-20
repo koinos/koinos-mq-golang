@@ -185,7 +185,7 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 				return
 			}
 
-			log.Debugf("Request handler received message: %v", delivery.CorrelationId)
+			log.Debugf("Request handler received broadcast for topic: %v", topic)
 			//fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
 
 			r.deliveryChan <- &rpcDelivery{
@@ -241,6 +241,7 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 
 func (r *RequestHandler) handleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
 	if handler, ok := r.broadcastHandlerMap[topic]; ok {
+		log.Debugf("Calling handler for %s", topic)
 		handler(delivery.RoutingKey, delivery.Body)
 	} else {
 		log.Errorf("Could not find handler for Broadcast '%v'\n", topic)
@@ -253,6 +254,7 @@ func (r *RequestHandler) deliveryConsumerLoop(ctx context.Context) {
 		select {
 		case d := <-r.deliveryChan:
 			if d.isBroadcast {
+				log.Debugf("Handling broadcast for %s", d.topic)
 				r.handleBroadcastDelivery(d.topic, d.delivery)
 			} else {
 				r.handleRPCDelivery(d.topic, d.delivery)
