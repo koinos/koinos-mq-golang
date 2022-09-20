@@ -241,7 +241,7 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 
 func (r *RequestHandler) handleBroadcastDelivery(topic string, delivery *amqp.Delivery) {
 	if handler, ok := r.broadcastHandlerMap[topic]; ok {
-		log.Debugf("Calling handler for %s", topic)
+		log.Debugf("Calling handler for %s with %v", topic, handler)
 		handler(delivery.RoutingKey, delivery.Body)
 	} else {
 		log.Errorf("Could not find handler for Broadcast '%v'\n", topic)
