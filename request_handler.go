@@ -2,7 +2,6 @@ package koinosmq
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
@@ -163,8 +162,8 @@ func (r *RequestHandler) consumeRPCLoop(ctx context.Context, consumer <-chan amq
 				return
 			}
 
-			log.Debugf("Request handler received message: %v", delivery)
-			fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
+			log.Debugf("Request handler received message: %v", delivery.CorrelationId)
+			//fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
@@ -186,8 +185,8 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 				return
 			}
 
-			log.Debugf("Request handler received message: %v", delivery)
-			fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
+			log.Debugf("Request handler received message: %v", delivery.CorrelationId)
+			//fmt.Printf("Request handler received message: %v", delivery.CorrelationId)
 
 			r.deliveryChan <- &rpcDelivery{
 				delivery:    &delivery,
@@ -218,7 +217,7 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 		return
 	}
 
-	fmt.Printf("Replying to message: %v", delivery.CorrelationId)
+	log.Debugf("Replying to message: %v", delivery.CorrelationId)
 
 	err = r.conn.AmqpChan.Publish(
 		rpcExchangeName,  // Exchange
