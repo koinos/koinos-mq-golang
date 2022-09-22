@@ -8,7 +8,7 @@ import (
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type ContentType string
