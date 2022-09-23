@@ -5,7 +5,7 @@ import (
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // RPCHandlerFunc Function type to handle an RPC message
@@ -198,7 +198,7 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 	}
 }
 
-func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delivery) {
+func (r *RequestHandler) handleRPCDelivery(ctx context.Context, rpcType string, delivery *amqp.Delivery) {
 	// TODO:  Proper RPC error handling
 	var err error
 	var output []byte
@@ -215,7 +215,12 @@ func (r *RequestHandler) handleRPCDelivery(rpcType string, delivery *amqp.Delive
 		return
 	}
 
-	err = r.conn.AmqpChan.Publish(
+	if r.conn.AmqpChan.IsClosed() {
+		return
+	}
+
+	err = r.conn.AmqpChan.PublishWithContext(
+		ctx,
 		rpcExchangeName,  // Exchange
 		delivery.ReplyTo, // Routing key (channel name for default exchange)
 		false,            // Mandatory
@@ -251,7 +256,7 @@ func (r *RequestHandler) deliveryConsumerLoop(ctx context.Context) {
 			if d.isBroadcast {
 				r.handleBroadcastDelivery(d.topic, d.delivery)
 			} else {
-				r.handleRPCDelivery(d.topic, d.delivery)
+				r.handleRPCDelivery(ctx, d.topic, d.delivery)
 			}
 
 		case <-ctx.Done():

@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	log "github.com/koinos/koinos-log-golang"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // connection Encapsulates all the connection-specific queue.

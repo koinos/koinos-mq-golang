@@ -8,7 +8,7 @@ import (
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
-	"github.com/streadway/amqp"
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type ContentType string
@@ -30,6 +30,7 @@ type rpcRequest struct {
 	rpcService  string
 	args        []byte
 	expiration  string
+	ctx         context.Context
 }
 
 type rpcResult struct {
@@ -174,8 +175,9 @@ func randomString(l int) string {
 }
 
 // Broadcast a message via AMQP
-func (client *Client) Broadcast(contentType ContentType, topic string, args []byte) error {
-	err := client.conn.AmqpChan.Publish(
+func (client *Client) Broadcast(ctx context.Context, contentType ContentType, topic string, args []byte) error {
+	err := client.conn.AmqpChan.PublishWithContext(
+		ctx,
 		broadcastExchangeName,
 		topic,
 		false,
@@ -206,6 +208,7 @@ func (c *Client) tryRPC(ctx context.Context, contentType ContentType, rpcService
 		rpcService:  rpcService,
 		args:        args,
 		expiration:  expiration,
+		ctx:         ctx,
 	}:
 	case <-ctx.Done():
 		go func() {
@@ -275,7 +278,8 @@ func (c *Client) consumeRPCReturnLoop(ctx context.Context, consumer <-chan amqp.
 func (c *Client) handleRequest(req *rpcRequest) {
 	c.rpcReturnMap[req.id] = req.resultChan
 
-	err := c.conn.AmqpChan.Publish(
+	err := c.conn.AmqpChan.PublishWithContext(
+		req.ctx,
 		rpcExchangeName,
 		rpcQueuePrefix+req.rpcService,
 		false,
