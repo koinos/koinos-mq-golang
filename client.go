@@ -330,7 +330,7 @@ func (c *Client) handleRequest(req *rpcRequest) {
 		err = errors.New("AMQP connection is not open")
 	}
 
-	if err != nil {
+	if err == nil {
 		c.rpcReturnMap[req.id] = req.resultChan
 
 		err = c.conn.AmqpChan.PublishWithContext(
