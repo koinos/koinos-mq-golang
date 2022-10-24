@@ -189,7 +189,7 @@ func (c *Client) tryBroadcast(ctx context.Context, contentType ContentType, topi
 		return errors.New("AMQP connection is not open")
 	}
 
-	err := c.conn.AmqpChan.PublishWithContext(
+	return c.conn.AmqpChan.PublishWithContext(
 		ctx,
 		broadcastExchangeName,
 		topic,
@@ -200,8 +200,6 @@ func (c *Client) tryBroadcast(ctx context.Context, contentType ContentType, topi
 			Body:        args,
 		},
 	)
-
-	return err
 }
 
 // Broadcast a message via AMQP

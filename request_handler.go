@@ -214,31 +214,25 @@ func (r *RequestHandler) tryRPCResponse(ctx context.Context, delivery *amqp.Deli
 	r.connMutex.Lock()
 	defer r.connMutex.Unlock()
 
-	var err error
-
 	if (r.conn == nil) || !r.conn.IsOpen() {
-		err = errors.New("AMQP connection is not open")
+		return errors.New("AMQP connection is not open")
 	}
 
-	if err != nil {
-		err = r.conn.AmqpChan.PublishWithContext(
-			ctx,
-			rpcExchangeName,  // Exchange
-			delivery.ReplyTo, // Routing key (channel name for default exchange)
-			false,            // Mandatory
-			false,            // Immediate
-			amqp.Publishing{
-				DeliveryMode:  amqp.Transient,
-				Timestamp:     time.Now(),
-				ContentType:   delivery.ContentType,
-				CorrelationId: delivery.CorrelationId,
-				Body:          output,
-				Expiration:    expiration,
-			},
-		)
-	}
-
-	return err
+	return r.conn.AmqpChan.PublishWithContext(
+		ctx,
+		rpcExchangeName,  // Exchange
+		delivery.ReplyTo, // Routing key (channel name for default exchange)
+		false,            // Mandatory
+		false,            // Immediate
+		amqp.Publishing{
+			DeliveryMode:  amqp.Transient,
+			Timestamp:     time.Now(),
+			ContentType:   delivery.ContentType,
+			CorrelationId: delivery.CorrelationId,
+			Body:          output,
+			Expiration:    expiration,
+		},
+	)
 }
 
 func (r *RequestHandler) handleRPCDelivery(ctx context.Context, rpcType string, delivery *amqp.Delivery) {
