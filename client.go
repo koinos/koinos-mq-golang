@@ -227,8 +227,7 @@ func (c *Client) Broadcast(ctx context.Context, contentType ContentType, topic s
 		// See if the policy requests a retry
 		retryResult := retry.CheckRetry()
 		if !retryResult.DoRetry {
-			//log.Warnf("RPC failed with error: %v", callResult.Error)
-			break
+			return fmt.Errorf("broadcast failed, %v", callResult.Error)
 		}
 
 		// Sleep for the required amount of time
@@ -293,8 +292,7 @@ func (c *Client) RPC(ctx context.Context, contentType ContentType, rpcService st
 		// See if the policy requests a retry
 		retryResult := retry.CheckRetry()
 		if !retryResult.DoRetry {
-			//log.Warnf("RPC failed with error: %v", callResult.Error)
-			break
+			return fmt.Errorf("rpc failed, %v", callResult.Error)
 		}
 
 		// Sleep for the required amount of time
