@@ -212,7 +212,7 @@ func (c *Client) Broadcast(ctx context.Context, contentType ContentType, topic s
 	for {
 		// If the context has been cancelled, quit without a result
 		if ctx.Err() != nil {
-			return ctx.Err()
+			return fmt.Errorf("broadcast failed, %v", ctx.Err())
 		}
 
 		broadcastCtx, broadcastCancel := context.WithTimeout(ctx, retry.PollTimeout())
@@ -227,7 +227,7 @@ func (c *Client) Broadcast(ctx context.Context, contentType ContentType, topic s
 		// See if the policy requests a retry
 		retryResult := retry.CheckRetry()
 		if !retryResult.DoRetry {
-			return fmt.Errorf("broadcast failed, %v", callResult.Error)
+			return fmt.Errorf("broadcast failed, %v", err)
 		}
 
 		// Sleep for the required amount of time
@@ -236,8 +236,6 @@ func (c *Client) Broadcast(ctx context.Context, contentType ContentType, topic s
 		case <-ctx.Done():
 		}
 	}
-
-	return errors.New("broadcast failed")
 }
 
 func (c *Client) tryRPC(ctx context.Context, contentType ContentType, rpcService string, expiration string, args []byte) ([]byte, error) {
@@ -277,7 +275,7 @@ func (c *Client) RPC(ctx context.Context, contentType ContentType, rpcService st
 	for {
 		// If the context has been cancelled, quit without a result
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("rpc failed, %v", ctx.Err())
 		}
 
 		rpcCtx, rpcCancel := context.WithTimeout(ctx, retry.PollTimeout())
@@ -292,7 +290,7 @@ func (c *Client) RPC(ctx context.Context, contentType ContentType, rpcService st
 		// See if the policy requests a retry
 		retryResult := retry.CheckRetry()
 		if !retryResult.DoRetry {
-			return fmt.Errorf("rpc failed, %v", callResult.Error)
+			return nil, fmt.Errorf("rpc failed, %v", err)
 		}
 
 		// Sleep for the required amount of time
@@ -301,8 +299,6 @@ func (c *Client) RPC(ctx context.Context, contentType ContentType, rpcService st
 		case <-ctx.Done():
 		}
 	}
-
-	return nil, errors.New("rpc failed")
 }
 
 func (c *Client) consumeRPCReturnLoop(ctx context.Context, consumer <-chan amqp.Delivery) {
