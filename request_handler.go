@@ -100,48 +100,48 @@ func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- s
 		log.Infof("Connecting request handler to AMQP server %v", r.Address)
 
 		for {
-			{
-				r.connMutex.Lock()
-				defer r.connMutex.Unlock()
+			r.connMutex.Lock()
 
-				connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
-				defer connectCancel()
+			connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
+			defer connectCancel()
 
-				r.conn = &connection{}
-				err := r.conn.Open(connectCtx, r.Address)
+			r.conn = &connection{}
+			err := r.conn.Open(connectCtx, r.Address)
 
-				if err == nil {
-					// Start handler consumption
-					for rpcType := range r.rpcHandlerMap {
-						consumers, err := r.conn.CreateRPCChannels(rpcType, 1)
-						if err != nil {
-							goto Delay
-						}
-						for _, consumer := range consumers {
-							go r.consumeRPCLoop(ctx, consumer, rpcType, r.conn.AmqpChan)
-						}
+			if err == nil {
+				// Start handler consumption
+				for rpcType := range r.rpcHandlerMap {
+					consumers, err := r.conn.CreateRPCChannels(rpcType, 1)
+					if err != nil {
+						goto Delay
 					}
-
-					for topic := range r.broadcastHandlerMap {
-						consumers, err := r.conn.CreateBroadcastChannels(topic, 1)
-						if err != nil {
-							goto Delay
-						}
-						for _, consumer := range consumers {
-							go r.consumeBroadcastLoop(ctx, consumer, topic)
-						}
+					for _, consumer := range consumers {
+						go r.consumeRPCLoop(ctx, consumer, rpcType, r.conn.AmqpChan)
 					}
-					log.Infof("Request handler connected")
-
-					if connectedChan != nil {
-						connectedChan <- struct{}{}
-						close(connectedChan)
-						connectedChan = nil
-					}
-					break
 				}
+
+				for topic := range r.broadcastHandlerMap {
+					consumers, err := r.conn.CreateBroadcastChannels(topic, 1)
+					if err != nil {
+						goto Delay
+					}
+					for _, consumer := range consumers {
+						go r.consumeBroadcastLoop(ctx, consumer, topic)
+					}
+				}
+				log.Infof("Request handler connected")
+
+				if connectedChan != nil {
+					connectedChan <- struct{}{}
+					close(connectedChan)
+					connectedChan = nil
+				}
+
+				break
 			}
+
 		Delay:
+			r.connMutex.Unlock()
 			delay := RetryMinDelay + RetryDelayPerRetry*retryCount
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
@@ -154,6 +154,8 @@ func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- s
 				return
 			}
 		}
+
+		r.connMutex.Unlock()
 
 		select {
 		case <-r.conn.NotifyClose:

@@ -117,37 +117,35 @@ func (c *Client) connectLoop(ctx context.Context, connectedChan chan<- struct{})
 		log.Infof("Connecting client to AMQP server %v", c.Address)
 
 		for {
-			{
-				c.connMutex.Lock()
-				defer c.connMutex.Unlock()
+			c.connMutex.Lock()
 
-				conectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
-				defer connectCancel()
+			conectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
+			defer connectCancel()
 
-				c.conn = &connection{}
-				err := c.conn.Open(conectCtx, c.Address)
+			c.conn = &connection{}
+			err := c.conn.Open(conectCtx, c.Address)
 
+			if err == nil {
+				consumers, replyTo, err := c.conn.CreateRPCReturnChannels(c.rpcReturnNumConsumers)
 				if err == nil {
-					consumers, replyTo, err := c.conn.CreateRPCReturnChannels(c.rpcReturnNumConsumers)
-					if err == nil {
-						c.rpcReplyTo = replyTo
-						for _, consumer := range consumers {
-							go c.consumeRPCReturnLoop(ctx, consumer)
-						}
-
-						log.Infof("Client connected")
-
-						if connectedChan != nil {
-							connectedChan <- struct{}{}
-							close(connectedChan)
-							connectedChan = nil
-						}
-
-						break
+					c.rpcReplyTo = replyTo
+					for _, consumer := range consumers {
+						go c.consumeRPCReturnLoop(ctx, consumer)
 					}
+
+					log.Infof("Client connected")
+
+					if connectedChan != nil {
+						connectedChan <- struct{}{}
+						close(connectedChan)
+						connectedChan = nil
+					}
+
+					break
 				}
 			}
 
+			c.connMutex.Unlock()
 			delay := RetryMinDelay + RetryDelayPerRetry*retryCount
 			if delay > RetryMaxDelay {
 				delay = RetryMaxDelay
@@ -161,6 +159,7 @@ func (c *Client) connectLoop(ctx context.Context, connectedChan chan<- struct{})
 			}
 		}
 
+		c.connMutex.Unlock()
 		select {
 		case <-c.conn.NotifyClose:
 			continue
