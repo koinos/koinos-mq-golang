@@ -2,6 +2,8 @@ package koinosmq
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"time"
 
 	log "github.com/koinos/koinos-log-golang"
@@ -41,20 +43,23 @@ type RequestHandler struct {
 	rpcHandlerMap       map[string]RPCHandlerFunc
 	broadcastHandlerMap map[string]BroadcastHandlerFunc
 
-	numConsumers uint
+	numConsumers     uint
+	replyRetryPolicy RetryPolicy
 
 	deliveryChan chan *rpcDelivery
 
-	conn *connection
+	conn      *connection
+	connMutex sync.Mutex
 }
 
 // NewRequestHandler factory method.
-func NewRequestHandler(addr string, consumers uint) *RequestHandler {
+func NewRequestHandler(addr string, consumers uint, replyRetryPolicy RetryPolicy) *RequestHandler {
 	return &RequestHandler{
 		Address:             addr,
 		rpcHandlerMap:       make(map[string]RPCHandlerFunc),
 		broadcastHandlerMap: make(map[string]BroadcastHandlerFunc),
 		numConsumers:        consumers,
+		replyRetryPolicy:    replyRetryPolicy,
 		deliveryChan:        make(chan *rpcDelivery, consumers),
 		conn:                &connection{},
 	}
@@ -95,41 +100,46 @@ func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- s
 		log.Infof("Connecting request handler to AMQP server %v", r.Address)
 
 		for {
-			r.conn = &connection{}
-			connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
-			defer connectCancel()
-			err := r.conn.Open(connectCtx, r.Address)
+			{
+				r.connMutex.Lock()
+				defer r.connMutex.Unlock()
 
-			if err == nil {
-				// Start handler consumption
-				for rpcType := range r.rpcHandlerMap {
-					consumers, err := r.conn.CreateRPCChannels(rpcType, 1)
-					if err != nil {
-						goto Delay
+				connectCtx, connectCancel := context.WithTimeout(ctx, ConnectionTimeout*time.Second)
+				defer connectCancel()
+
+				r.conn = &connection{}
+				err := r.conn.Open(connectCtx, r.Address)
+
+				if err == nil {
+					// Start handler consumption
+					for rpcType := range r.rpcHandlerMap {
+						consumers, err := r.conn.CreateRPCChannels(rpcType, 1)
+						if err != nil {
+							goto Delay
+						}
+						for _, consumer := range consumers {
+							go r.consumeRPCLoop(ctx, consumer, rpcType, r.conn.AmqpChan)
+						}
 					}
-					for _, consumer := range consumers {
-						go r.consumeRPCLoop(ctx, consumer, rpcType, r.conn.AmqpChan)
+
+					for topic := range r.broadcastHandlerMap {
+						consumers, err := r.conn.CreateBroadcastChannels(topic, 1)
+						if err != nil {
+							goto Delay
+						}
+						for _, consumer := range consumers {
+							go r.consumeBroadcastLoop(ctx, consumer, topic)
+						}
 					}
+					log.Infof("Request handler connected")
+
+					if connectedChan != nil {
+						connectedChan <- struct{}{}
+						close(connectedChan)
+						connectedChan = nil
+					}
+					break
 				}
-
-				for topic := range r.broadcastHandlerMap {
-					consumers, err := r.conn.CreateBroadcastChannels(topic, 1)
-					if err != nil {
-						goto Delay
-					}
-					for _, consumer := range consumers {
-						go r.consumeBroadcastLoop(ctx, consumer, topic)
-					}
-				}
-				log.Infof("Request handler connected")
-
-				if connectedChan != nil {
-					connectedChan <- struct{}{}
-					close(connectedChan)
-					connectedChan = nil
-				}
-
-				break
 			}
 		Delay:
 			delay := RetryMinDelay + RetryDelayPerRetry*retryCount
@@ -198,6 +208,37 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 	}
 }
 
+func (r *RequestHandler) tryRPCResponse(ctx context.Context, delivery *amqp.Delivery, expiration string, output []byte) error {
+	r.connMutex.Lock()
+	defer r.connMutex.Unlock()
+
+	var err error
+
+	if (r.conn == nil) || !r.conn.IsOpen() {
+		err = errors.New("AMQP connection is not open")
+	}
+
+	if err != nil {
+		err = r.conn.AmqpChan.PublishWithContext(
+			ctx,
+			rpcExchangeName,  // Exchange
+			delivery.ReplyTo, // Routing key (channel name for default exchange)
+			false,            // Mandatory
+			false,            // Immediate
+			amqp.Publishing{
+				DeliveryMode:  amqp.Transient,
+				Timestamp:     time.Now(),
+				ContentType:   delivery.ContentType,
+				CorrelationId: delivery.CorrelationId,
+				Body:          output,
+				Expiration:    expiration,
+			},
+		)
+	}
+
+	return err
+}
+
 func (r *RequestHandler) handleRPCDelivery(ctx context.Context, rpcType string, delivery *amqp.Delivery) {
 	// TODO:  Proper RPC error handling
 	var err error
@@ -215,28 +256,34 @@ func (r *RequestHandler) handleRPCDelivery(ctx context.Context, rpcType string, 
 		return
 	}
 
-	if r.conn.AmqpChan.IsClosed() {
-		return
-	}
+	retry := getRetryPolicy(r.replyRetryPolicy)
 
-	err = r.conn.AmqpChan.PublishWithContext(
-		ctx,
-		rpcExchangeName,  // Exchange
-		delivery.ReplyTo, // Routing key (channel name for default exchange)
-		false,            // Mandatory
-		false,            // Immediate
-		amqp.Publishing{
-			DeliveryMode:  amqp.Transient,
-			Timestamp:     time.Now(),
-			ContentType:   delivery.ContentType,
-			CorrelationId: delivery.CorrelationId,
-			Body:          output,
-		},
-	)
+	for {
+		if ctx.Err() != nil {
+			return
+		}
 
-	if err != nil {
-		log.Errorf("Couldn't deliver message, %v", err.Error())
-		// TODO: Should an error close the connection?
+		replyCtx, replyCancel := context.WithTimeout(ctx, retry.PollTimeout())
+		defer replyCancel()
+
+		err = r.tryRPCResponse(replyCtx, delivery, durationToUnitString(retry.PollTimeout(), time.Millisecond), output)
+
+		// If there were no errors, we are done
+		if err == nil {
+			return
+		}
+
+		// See if the policy requests a retry
+		retryResult := retry.CheckRetry()
+		if !retryResult.DoRetry {
+			return
+		}
+
+		// Sleep for the required amount of time
+		select {
+		case <-time.After(retryResult.Timeout):
+		case <-ctx.Done():
+		}
 	}
 }
 
