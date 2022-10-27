@@ -1,12 +1,15 @@
 package koinosmq
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 const (
 	defaultEBInitialTimeout = (time.Second * 1)
 	defaultEBMaxTimeout     = (time.Second * 30)
 	defaultEBExponent       = 2.0
-	noRetryTimeout          = (time.Second * 1)
+	noRetryTimeout          = (time.Second * math.MaxInt32)
 )
 
 // CheckRetryResult represents describes whether a retry is requested, and how long to timeout first
