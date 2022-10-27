@@ -162,8 +162,10 @@ func (c *Client) connectLoop(ctx context.Context, connectedChan chan<- struct{})
 		c.connMutex.Unlock()
 		select {
 		case <-c.conn.NotifyClose:
+			c.conn.Close()
 			continue
 		case <-ctx.Done():
+			c.conn.Close()
 			return
 		}
 	}
