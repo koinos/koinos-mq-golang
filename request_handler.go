@@ -212,7 +212,7 @@ func (r *RequestHandler) consumeBroadcastLoop(ctx context.Context, consumer <-ch
 	}
 }
 
-func (r *RequestHandler) tryRPCResponse(ctx context.Context, delivery *amqp.Delivery, expiration string, output []byte) error {
+func (r *RequestHandler) tryRPCResponse(ctx context.Context, delivery *amqp.Delivery, output []byte) error {
 	r.connMutex.Lock()
 	defer r.connMutex.Unlock()
 
@@ -232,7 +232,6 @@ func (r *RequestHandler) tryRPCResponse(ctx context.Context, delivery *amqp.Deli
 			ContentType:   delivery.ContentType,
 			CorrelationId: delivery.CorrelationId,
 			Body:          output,
-			Expiration:    expiration,
 		},
 	)
 }
@@ -264,7 +263,7 @@ func (r *RequestHandler) handleRPCDelivery(ctx context.Context, rpcType string, 
 		replyCtx, replyCancel := context.WithTimeout(ctx, retry.PollTimeout())
 		defer replyCancel()
 
-		err = r.tryRPCResponse(replyCtx, delivery, durationToUnitString(retry.PollTimeout(), time.Millisecond), output)
+		err = r.tryRPCResponse(replyCtx, delivery, output)
 
 		// If there were no errors, we are done
 		if err == nil {
