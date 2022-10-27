@@ -159,8 +159,10 @@ func (r *RequestHandler) connectLoop(ctx context.Context, connectedChan chan<- s
 
 		select {
 		case <-r.conn.NotifyClose:
+			r.conn.Close()
 			continue
 		case <-ctx.Done():
+			r.conn.Close()
 			return
 		}
 	}
