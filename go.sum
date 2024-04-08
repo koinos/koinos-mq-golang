@@ -3,8 +3,8 @@ github.com/BurntSushi/toml v1.2.1/go.mod h1:CxXYINrC8qIiEnFrOxCa7Jy5BFHlXnUU2pbi
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/koinos/koinos-log-golang v1.0.0 h1:BlA8N2AOT3Xai5+ErvyIPz9RLHedLGfUxYnUAPRrzac=
-github.com/koinos/koinos-log-golang v1.0.0/go.mod h1:/dzAVdA+woySENUYwls8RT+5i87Rm4qoMZ4ctEQI8k0=
+github.com/koinos/koinos-log-golang/v2 v2.0.0 h1:fOFySSI9+cdmIol9W0a4LQ7Bss1sV1pqxh0JKVx2K3g=
+github.com/koinos/koinos-log-golang/v2 v2.0.0/go.mod h1:P4Xa5LX5Jt+KkzT3CuT9/i2yTrTaJVHN5jd51MM2Tmk=
 github.com/kr/pretty v0.1.0 h1:L/CwN0zerZDmRFUapSPitk6f+Q3+0za1rQkzVuMiMFI=
 github.com/kr/pretty v0.1.0/go.mod h1:dAy3ld7l9f0ibDNOQOHHMYYIIbhfbHSm3C4ZsoJORNo=
 github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
