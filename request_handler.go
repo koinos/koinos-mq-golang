@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	log "github.com/koinos/koinos-log-golang"
+	log "github.com/koinos/koinos-log-golang/v2"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
