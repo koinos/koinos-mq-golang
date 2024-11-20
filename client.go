@@ -242,6 +242,8 @@ func (c *Client) tryRPC(ctx context.Context, contentType ContentType, rpcService
 	corrID := randomString(32)
 	resultChan := make(chan *RPCCallResult, 1)
 
+	log.Infof("Sending RPC with ID: %s", corrID)
+
 	select {
 	case c.requestChan <- &rpcRequest{
 		resultChan:  resultChan,
@@ -303,6 +305,7 @@ func (c *Client) RPC(ctx context.Context, contentType ContentType, rpcService st
 
 func (c *Client) consumeRPCReturnLoop(ctx context.Context, consumer <-chan amqp.Delivery) {
 	for delivery := range consumer {
+		log.Infof("Received RPC with ID: %s", delivery.CorrelationId)
 		select {
 		case c.resultChan <- &rpcResult{
 			id:   delivery.CorrelationId,
