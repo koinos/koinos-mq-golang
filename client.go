@@ -368,6 +368,7 @@ func (c *Client) handleResult(res *rpcResult) {
 
 func (c *Client) handleExpiration(id string) {
 	if resChan, ok := c.rpcReturnMap[id]; ok {
+		log.Infof("Expiring request with ID: %s", id)
 		delete(c.rpcReturnMap, id)
 		resChan <- &RPCCallResult{
 			Error: errors.New("rpc call timeout"),
